@@ -1,0 +1,26 @@
+# When a tagged commit is pushed the documentation pages and npm module are published/deployed:
+# npm version patch -m "%s Release"
+language: node_js
+sudo: required
+# linux dist that includes C++ compiler needed for native node modules
+dist: xenial
+# paths required by the oracledb module
+env:
+  - ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe ORACLE_SID=XE OCI_LIB_DIR=/u01/app/oracle/product/11.2.0/xe/lib LD_LIBRARY_PATH=/u01/app/oracle/product/11.2.0/xe/lib
+before_install:
+  - bash ./test/pkg/install.sh
+branches:
+  only:
+    - master
+    - "/v*/"
+script:
+# - printenv
+  - "npm test"
+deploy:
+  - provider: npm
+    email: "ugate.public@gmail.com"
+    api_key: $NPM_TOKEN  # Set in the settings page of your repository, as a secure variable
+    on:
+      tags: true # only on tagging commit
+      branch:
+        - /v(\d+\.)?(\d+\.)?(\*|\d+)$/
