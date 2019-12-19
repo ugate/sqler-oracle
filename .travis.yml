@@ -8,7 +8,8 @@ dist: xenial
 env:
   - ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe ORACLE_SID=XE OCI_LIB_DIR=/u01/app/oracle/product/11.2.0/xe/lib LD_LIBRARY_PATH=/u01/app/oracle/product/11.2.0/xe/lib
 before_install:
-  - bash ./test/pkg/install.sh
+  - wget https://raw.githubusercontent.com/ugate/repo/master/oracle/install.sh
+  - bash ./install.sh
 branches:
   only:
     - master
