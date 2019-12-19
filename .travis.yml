@@ -9,7 +9,8 @@ dist: xenial
 # paths required by the oracledb module
 env:
   - ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe ORACLE_SID=XE OCI_LIB_DIR=/u01/app/oracle/product/11.2.0/xe/lib LD_LIBRARY_PATH=/u01/app/oracle/product/11.2.0/xe/lib
-  - ORA_REPO_VER=v0.0.1
+  - ORA_REPO_VER=v0.0.2
+  - ORA_REPO_USER=travis
 before_install:
   - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/install.sh
   - bash ./install.sh
