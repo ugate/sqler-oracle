@@ -31,8 +31,8 @@ function getConf() {
       "db": {
         "testId": {
           "host": "localhost",
-          "username": "system",
-          "password": "oracle"
+          "username": process.env.ORA_REPO_USER,
+          "password": process.env.ORA_REPO_PASS || process.env.ORA_REPO_USER
         }
       }
     },
