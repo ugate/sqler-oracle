@@ -4,10 +4,12 @@
 const { Labrat, LOGGER } = require('@ugate/labrat');
 const { Manager } = require('sqler');
 const Fs = require('fs');
+const Os = require('os');
 const { expect } = require('@hapi/code');
 // TODO : import { Labrat, LOGGER } from '@ugate/labrat';
 // TODO : import { Manager } from 'sqler.mjs';
 // TODO : import * as Fs from 'fs';
+// TODO : import * as Os from 'os';
 // TODO : import { expect } from '@hapi/code';
 
 const priv = { mgr: null, cache: null };
@@ -31,8 +33,8 @@ function getConf() {
       "db": {
         "testId": {
           "host": "localhost",
-          "username": process.env.ORA_REPO_USER,
-          "password": process.env.ORA_REPO_PASS || process.env.ORA_REPO_USER
+          "username": Os.userInfo().username,
+          "password": Os.userInfo().username
         }
       }
     },
