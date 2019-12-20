@@ -12,6 +12,7 @@ env:
 before_install:
   - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/install.sh
   - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/grant.sh
+  - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/grant.sql
   - bash ./install.sh
   - bash ./grant.sh
 branches:
