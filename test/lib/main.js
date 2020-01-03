@@ -12,12 +12,15 @@ const { expect } = require('@hapi/code');
 // TODO : import * as Os from 'os';
 // TODO : import { expect } from '@hapi/code';
 
-const priv = { mgr: null, cache: null };
+const priv = { mgr: null, cache: null, rowCount: 1 };
 
 // TODO : ESM uncomment the following line...
 // export
 class Tester {
 
+  /**
+   * Create table(s) used for testing
+   */
   static async before() {
     if (LOGGER.info) LOGGER.info('Creating test tables');
     
@@ -27,9 +30,13 @@ class Tester {
     await priv.mgr.init();
     
     await priv.mgr.db.tst.ora_test.create.tables();
+    await priv.mgr.commit();
     priv.created = true;
   }
 
+  /**
+   * Drop table(s) used for testing
+   */
   static async after() {
     if (!priv.created) {
       if (LOGGER.info) LOGGER.info('Skipping dropping of test tables');
@@ -45,23 +52,38 @@ class Tester {
     }
     
     await priv.mgr.db.tst.ora_test.delete.tables();
+    await priv.mgr.commit();
     priv.created = false;
   }
 
+  /**
+   * Start cache (if present)
+   */
   static async beforeEach() {
     const cch = priv.cache;
     priv.cache = null;
     if (cch && cch.start) await cch.start();
   }
 
+  /**
+   * Stop cache (if present)
+   */
   static async afterEach() {
     const cch = priv.cache;
     priv.cache = null;
     if (cch && cch.stop) await cch.stop();
   }
 
-  static async createTables() {
-    //return testSql();
+  /**
+   * Create, read, update, read, delete and read test rows
+   */
+  static async cruds() {
+    await rows('create');
+    await rows('read');
+    await rows('update');
+    await rows('read');
+    await rows('delete');
+    return rows('read', null, true);
   }
 }
 
@@ -90,12 +112,52 @@ function getConf() {
           "name": "tst",
           "dir": "db",
           "service": "XE",
-          "dialect": "oracle"
+          "dialect": "oracle",
+          "driverOptions": {
+            "autocommit": false
+          }
         }
       ]
     }
   };
   return conf;
+}
+
+/**
+ * Performs `priv.rowCount` CRUD operation(s) and validates the results
+ * @param {String} op The CRUD operation name
+ * @param {Manager~ExecOptions} [opts] The `sqler` execution options
+ * @param {Boolean} [deleted] Truthy to indicate that no rows should appear in the results
+ */
+async function rows(op, opts, deleted) {
+  if (LOGGER.info) LOGGER.info(`Performing "${op}" on ${priv.rowCount} test records`);
+
+  opts = opts || {};
+  if (!priv.mgr) {
+    const conf = getConf();
+    priv.mgr = new Manager(conf, priv.cache, !!LOGGER.info);
+    await priv.mgr.init();
+  }
+  
+  const proms = new Array(priv.rowCount), date = new Date();
+  for (let i = 0, binds; i < priv.rowCount; i++) {
+    if (op === 'create') {
+      binds = { id: i + 1, name: `${op} ${i}`, created: date, updated: date };
+    } else if (op = 'update') {
+      binds = { id: i + 1, updated: date };
+    } else if (op === 'delete') {
+      binds = { id: i + 1 };
+    } else if (op === 'read') {
+      binds = { id: i + 1 };
+    }
+    proms[i] = priv.mgr.db.tst[op].table.rows({ binds });
+  }
+
+  const rslts = await Promise.all(proms);
+  await priv.mgr.commit();
+  for (let rslt of rslts) {
+    if (LOGGER.info) LOGGER.info(`Result for "${op}"`, rslt);
+  }
 }
 
 /**

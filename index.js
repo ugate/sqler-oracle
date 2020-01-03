@@ -147,15 +147,7 @@ module.exports = class OracleDialect {
    * @returns {(Integer | Error)} The number of transactions that were successfully committed (or an error when returning errors instead of throwing them)
    */
   async commit(opts) {
-    const ora = internal(this);
-    try {
-      await ora.at.oracledb.rollback();
-    } catch (err) {
-      ora.at.log(`Failed to commit ${opts.tx.pending} Oracle transaction(s) with options: ${JSON.stringify(opts)}`, err);
-      if (ora.at.connConf.returnErrors) return err;
-      throw err;
-    }
-    return opts.tx.pending;
+    return operation('commit', internal(this), opts);
   }
 
   /**
@@ -164,16 +156,7 @@ module.exports = class OracleDialect {
    * @returns {(Integer | Error)} The number of transactions that were successfully rolled back (or an error when returning errors instead of throwing them)
    */
   async rollback(opts) {
-    const ora = internal(this);
-    try {
-      await ora.at.oracledb.rollback();
-      ora.at.meta.connections.open = ora.at.meta.connections.inUse = 0;
-    } catch (err) {
-      ora.at.log(`Failed to rollback ${opts.tx.pending} Oracle transaction(s) with options: ${JSON.stringify(opts)}`, err);
-      if (ora.at.connConf.returnErrors) return err;
-      throw err;
-    }
-    return opts.tx.pending;
+    return operation('rollback', internal(this), opts);
   }
 
   /**
@@ -202,7 +185,7 @@ module.exports = class OracleDialect {
    */
   isAutocommit(opts) {
     const ora = internal(this);
-    return opts.dialectOptions && opts.dialectOptions.hasOwnProperty('autocommit') ? opts.dialectOptions.autocommit : ora.at.oracledb.autocommit;
+    return opts && opts.driverOptions && opts.driverOptions.hasOwnProperty('autocommit') ? opts.driverOptions.autocommit : ora.at.oracledb.autocommit || false;
   }
 
   /**
@@ -219,6 +202,36 @@ module.exports = class OracleDialect {
     return internal(this).at.meta.connections.inUse;
   }
 };
+
+/**
+ * Executes a function by name that resides on the Oracle connection
+ * @private
+ * @param {String} name The name of the function that will be called on the connection
+ * @param {Object} ora The internal Oracle object instance
+ * @param {Dialect~DialectOptions} opts The {@link Dialect~DialectOptions}
+ * @returns {Integer} The `opts.tx.pending` value
+ */
+async function operation(name, ora, opts) {
+  const pool = ora.at.oracledb.getPool(ora.at.pool.alias);
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn[name]();
+    conn.close();
+  } catch (err) {
+    if (conn) {
+      try {
+        conn.close();
+      } catch (cerr) {
+        err.closeError = cerr;
+      }
+    }
+    ora.at.log(`Failed to ${name} ${opts.tx.pending} Oracle transaction(s) with options: ${JSON.stringify(opts)}`, err);
+    if (ora.at.connConf.returnErrors) return err;
+    throw err;
+  }
+  return opts.tx.pending;
+}
 
 /**
  * Creates a logging function that logs each argument to either an error logger when the argument is an `Error` or a non-error logger

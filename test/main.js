@@ -24,5 +24,5 @@ lab.experiment(plan, () => {
   if (Tester.beforeEach) lab.beforeEach(Tester.beforeEach);
   if (Tester.afterEach) lab.afterEach(Tester.afterEach);
 
-  lab.test(`${plan}: Create Tables`, { timeout: TEST_TKO }, Tester.createTables);
+  lab.test(`${plan}: Create, read, update, read, delete and read test rows`, { timeout: TEST_TKO }, Tester.cruds);
 });

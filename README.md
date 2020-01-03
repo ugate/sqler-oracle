@@ -13,4 +13,4 @@
 
 - [Manual](https://ugate.github.io/sqler-oracle/tutorial-1-manual.html)
 - [API Docs](https://ugate.github.io/sqler-oracle/module.exports.html)
-- [Testing](https://github.com/ugate/sqler-oracle/tree/master/test/#readme)
+- [Testing](https://ugate.github.io/sqler-oracle/tutorial-2-testing.html)
