@@ -18,8 +18,50 @@ const priv = { mgr: null, cache: null };
 // export
 class Tester {
 
+  static async before() {
+    if (LOGGER.info) LOGGER.info('Creating test tables');
+    
+    const conf = getConf();
+    priv.cache = null;
+    priv.mgr = new Manager(conf, priv.cache, !!LOGGER.info);
+    await priv.mgr.init();
+    
+    await priv.mgr.db.tst.ora_test.create.tables();
+    priv.created = true;
+  }
+
+  static async after() {
+    if (!priv.created) {
+      if (LOGGER.info) LOGGER.info('Skipping dropping of test tables');
+      return;
+    }
+    if (LOGGER.info) LOGGER.info('Dropping test tables');
+    
+    const conf = getConf();
+    priv.cache = null;
+    if (!priv.mgr) {
+      priv.mgr = new Manager(conf, priv.cache, !!LOGGER.info);
+      await priv.mgr.init();
+    }
+    
+    await priv.mgr.db.tst.ora_test.delete.tables();
+    priv.created = false;
+  }
+
+  static async beforeEach() {
+    const cch = priv.cache;
+    priv.cache = null;
+    if (cch && cch.start) await cch.start();
+  }
+
+  static async afterEach() {
+    const cch = priv.cache;
+    priv.cache = null;
+    if (cch && cch.stop) await cch.stop();
+  }
+
   static async createTables() {
-    return testSql();
+    //return testSql();
   }
 }
 
@@ -40,7 +82,7 @@ function getConf() {
     },
     "db": {
       "dialects": {
-        "oracle": './index.js'
+        "oracle": './test/dialects/test-dialect.js'
       },
       "connections": [
         {
@@ -48,9 +90,7 @@ function getConf() {
           "name": "tst",
           "dir": "db",
           "service": "XE",
-          "sql": {
-            "dialect": "oracle"
-          }
+          "dialect": "oracle"
         }
       ]
     }
@@ -72,7 +112,7 @@ async function testSql(cache, cacheOpts) {
   await priv.mgr.init();
   
   const binds = undefined;//{ someCol1: 1, someCol2: 2, someCol3: 3 };
-  const rslt1 = await priv.mgr.db.tst.ora_test.create.tables(binds, 'en-US', ['test-frag']);
+  const rslt1 = await priv.mgr.db.tst.ora_test.create.tables(binds, ['test-frag']);
   console.log (rslt1);
 
   return;
@@ -91,7 +131,7 @@ async function testSql(cache, cacheOpts) {
     await Labrat.wait(cacheOpts && cacheOpts.hasOwnProperty('expiresIn') ? cacheOpts.expiresIn : 1000);
 
     const frags = cache ? ['test-frag'] : null;
-    const rslt2 = await priv.mgr.db.tst.read.some.tables(binds, 'en-US', frags);
+    const rslt2 = await priv.mgr.db.tst.read.some.tables(binds, frags);
 
     expect(rslt2).to.be.array();
     expect(rslt2).to.be.length(cache ? 1 : 2); // one record w/order by and updated by cache
