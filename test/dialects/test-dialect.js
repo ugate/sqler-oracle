@@ -35,13 +35,15 @@ module.exports = class OracleTestDialect extends OracleDialect {
     expect(connConf.dialect, 'connConf.dialect.length').to.not.be.empty();
 
     expect(connConf.driverOptions, 'connConf.driverOptions').to.be.object();
-    expect(connConf.driverOptions.autocommit, 'connConf.driverOptions.autocommit').to.be.boolean();
-    expect(connConf.driverOptions.autocommit, 'connConf.driverOptions.autocommit = this.isAutocommit').to.equal(this.isAutocommit());
+    expect(connConf.driverOptions.oracledb, 'connConf.driverOptions.oracledb').to.be.object();
+    expect(connConf.driverOptions.oracledb.autocommit, 'connConf.driverOptions.oracledb.autocommit = this.isAutocommit').to.equal(this.isAutocommit());
 
     expect(track, 'track').to.be.object();
     expect(errorLogger, 'errorLogger').to.be.function();
     expect(logger, 'logger').to.be.function();
     expect(debug, 'debug').to.be.boolean();
+
+    expect(this.driver, `${this.constructor.name} driver`).to.be.object();
   }
 
   /**
@@ -54,7 +56,11 @@ module.exports = class OracleTestDialect extends OracleDialect {
   /**
    * @inheritdoc
    */
-  async exec(sql, opts, frags) {console.log('##########################3',opts)
+  async exec(sql, opts, frags) {
+    expect(sql, 'sql').to.be.string();
+
+    expect(opts, 'opts').to.be.object();
+
     return super.exec(sql, opts, frags);
   }
 
@@ -62,6 +68,8 @@ module.exports = class OracleTestDialect extends OracleDialect {
    * @inheritdoc
    */
   async commit(opts) {
+    expect(opts, 'opts').to.be.object();
+
     return super.commit(opts);
   }
 
@@ -69,6 +77,8 @@ module.exports = class OracleTestDialect extends OracleDialect {
    * @inheritdoc
    */
   async rollback(opts) {
+    expect(opts, 'opts').to.be.object();
+
     return super.rollback(opts);
   }
 
@@ -76,6 +86,8 @@ module.exports = class OracleTestDialect extends OracleDialect {
    * @inheritdoc
    */
   async close(opts) {
+    expect(opts, 'opts').to.be.object();
+
     return super.close(opts);
   }
 

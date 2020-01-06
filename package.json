@@ -27,12 +27,12 @@
   "devDependencies": {
     "@hapi/code": "^7.0.0",
     "@hapi/lab": "^22.0.2",
-    "@ugate/labrat": "^1.0.0",
+    "@ugate/labrat": "^1.0.1",
     "jsdoc": "^3.6.3",
     "jsdocp": "^1.0.3",
     "minami": "^1.2.3",
     "oracledb": "^4.1.0",
-    "sqler": "^0.9.0"
+    "sqler": "^1.0.0"
   },
   "files": [
     "/index.js",

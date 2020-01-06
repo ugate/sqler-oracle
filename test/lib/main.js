@@ -12,7 +12,7 @@ const { expect } = require('@hapi/code');
 // TODO : import * as Os from 'os';
 // TODO : import { expect } from '@hapi/code';
 
-const priv = { mgr: null, cache: null, rowCount: 1 };
+const priv = { mgr: null, cache: null, rowCount: 1, mgrLogit: !!LOGGER.info };
 
 // TODO : ESM uncomment the following line...
 // export
@@ -22,11 +22,11 @@ class Tester {
    * Create table(s) used for testing
    */
   static async before() {
-    if (LOGGER.info) LOGGER.info('Creating test tables');
+    Labrat.header('Creating test tables');
     
     const conf = getConf();
     priv.cache = null;
-    priv.mgr = new Manager(conf, priv.cache, !!LOGGER.info);
+    priv.mgr = new Manager(conf, priv.cache, priv.mgrLogit);
     await priv.mgr.init();
     
     await priv.mgr.db.tst.ora_test.create.tables();
@@ -39,15 +39,15 @@ class Tester {
    */
   static async after() {
     if (!priv.created) {
-      if (LOGGER.info) LOGGER.info('Skipping dropping of test tables');
+      Labrat.header('Skipping dropping of test tables');
       return;
     }
-    if (LOGGER.info) LOGGER.info('Dropping test tables');
+    Labrat.header('Dropping test tables');
     
     const conf = getConf();
     priv.cache = null;
     if (!priv.mgr) {
-      priv.mgr = new Manager(conf, priv.cache, !!LOGGER.info);
+      priv.mgr = new Manager(conf, priv.cache, priv.mgrLogit);
       await priv.mgr.init();
     }
     
@@ -78,6 +78,7 @@ class Tester {
    * Create, read, update, read, delete and read test rows
    */
   static async cruds() {
+    Labrat.header('Runing CRUD tests');
     await rows('create');
     await rows('read');
     await rows('update');
@@ -114,7 +115,9 @@ function getConf() {
           "service": "XE",
           "dialect": "oracle",
           "driverOptions": {
-            "autocommit": false
+            "oracledb": {
+              "autocommit": false
+            }
           }
         }
       ]
@@ -135,7 +138,7 @@ async function rows(op, opts, deleted) {
   opts = opts || {};
   if (!priv.mgr) {
     const conf = getConf();
-    priv.mgr = new Manager(conf, priv.cache, !!LOGGER.info);
+    priv.mgr = new Manager(conf, priv.cache, priv.mgrLogit);
     await priv.mgr.init();
   }
   
@@ -157,63 +160,6 @@ async function rows(op, opts, deleted) {
   await priv.mgr.commit();
   for (let rslt of rslts) {
     if (LOGGER.info) LOGGER.info(`Result for "${op}"`, rslt);
-  }
-}
-
-/**
- * Tests that SQL statements work with and w/o {@link Cache} by re-writting the SQL file to see if the cahce picks it up
- * @param {Cache} [cache] the {@link Cache} that will be used for SQL statements
- * @param {Object} [cacheOpts] the options that were used on the specified {@link Cache}
- */
-async function testSql(cache, cacheOpts) {
-  if (LOGGER.info) LOGGER.info(`Begin basic test`);
-    
-  const conf = getConf();
-  priv.cache = cache;
-  priv.mgr = new Manager(conf, priv.cache, !!LOGGER.info);
-  await priv.mgr.init();
-  
-  const binds = undefined;//{ someCol1: 1, someCol2: 2, someCol3: 3 };
-  const rslt1 = await priv.mgr.db.tst.ora_test.create.tables(binds, ['test-frag']);
-  console.log (rslt1);
-
-  return;
-  expect(rslt1).to.be.array();
-  expect(rslt1).to.be.length(2); // two records should be returned w/o order by
-  if (LOGGER.info) LOGGER.info('BEFORE Cache Update:', rslt1);
-  
-  
-  // change the SQL file
-  const sql = (await sqlFile()).toString();
-  try {
-    // update the file
-    await sqlFile(`${sql}\nORDER BY SOME_COL1`);
-
-    // wait for the the SQL statement to expire
-    await Labrat.wait(cacheOpts && cacheOpts.hasOwnProperty('expiresIn') ? cacheOpts.expiresIn : 1000);
-
-    const frags = cache ? ['test-frag'] : null;
-    const rslt2 = await priv.mgr.db.tst.read.some.tables(binds, frags);
-
-    expect(rslt2).to.be.array();
-    expect(rslt2).to.be.length(cache ? 1 : 2); // one record w/order by and updated by cache
-    if (LOGGER.info) LOGGER.info('AFTER Cahce Update:', rslt2);
-
-  } finally {
-    await sqlFile(sql);
-  }
-}
-
-/**
- * Reads/writes test SQL file
- * @param {String} [sql] The SQL to write to the test file (omit to just read file)
- */
-async function sqlFile(sql) {
-  const sqlPath = './test/db/read.some.tables.sql';
-  if (typeof sql === 'string') {
-    return Fs.promises.writeFile(sqlPath, sql);
-  } else {
-    return Fs.promises.readFile(sqlPath);
   }
 }
 

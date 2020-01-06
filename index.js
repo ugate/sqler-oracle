@@ -5,16 +5,30 @@ const Path = require('path');
 const Util = require('util');
 
 /**
-* Oracle database implementation for [sqler](https://ugate.github.io/sqler/)
-*/
+ * Oracle specific {@link Manager~ConnectionOptions} from the `sqler` module
+ * @typedef {Manager~ConnectionOptions} OracleDialect~ConnectionOptions
+ * @property {Object} [driverOptions.oracledb] An object that will contain properties set on the global `oracledb` class
+ * @property {Object} [driverOptions.pool] The pool `conf` options that will be passed into `oracledb.createPool({ conf })`.
+ * __Using any of the generic `pool.someOption` will override the `conf` options set on `driverOptions.pool`.__
+ */
+
+/**
+ * Oracle specific {@link Dialect~DialectExecOptions} from the `sqler` module
+ * @typedef {Dialect~DialectExecOptions} OracleDialect~OracleDialectExecOptions
+ * @property {Object} [driverOptions.pool] The pool attribute options passed into `oracledbPool.getConnection()`
+ * @property {Object} [driverOptions.exec] The execution options passed into `oracledbConnection.execute()`
+ */
+
+/**
+ * Oracle database implementation for [sqler](https://ugate.github.io/sqler/)
+ */
 module.exports = class OracleDialect {
 
   /**
    * Constructor
    * @constructs OracleDialect
    * @param {Manager~PrivateOptions} priv the username that will be used to connect to the database
-   * @param {Manager~ConnectionOptions} connConf the individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
-   * @param {String} [connConf.driverOptions.connectionClass] The Oracle connection class to use
+   * @param {OracleDialect~ConnectionOptions} connConf the individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
    * @param {Object} [track={}] tracking object that will be used to prevent possible file overwrites of the TNS file when multiple {@link OracleDB}s are used
    * @param {function} [errorLogger=console.error] the logging function for errors
    * @param {function} [logger=console.log] the logging function for non-errors
@@ -24,13 +38,22 @@ module.exports = class OracleDialect {
     const ora = internal(this);
 
     ora.at.oracledb = require('oracledb');
-    ora.at.oracledb.connectionClass = (connConf.driverOptions && connConf.driverOptions.connectionClass) || 'DBPOOL';
     ora.at.oracledb.Promise = Promise; // tell Oracle to use the built-in promise
 
+    const odbOpts = connConf.driverOptions && connConf.driverOptions.oracledb;
+    if (odbOpts) {
+      for (let dopt in odbOpts) {
+        if (!odbOpts.hasOwnProperty('dopt')) continue;
+        ora.at.oracledb[dopt] = odbOpts[dopt];
+      }
+    }
+    if (!ora.at.oracledb.connectionClass) ora.at.oracledb.connectionClass = 'DBPOOL';
+
+    const poolOpts = (connConf.driverOptions && connConf.driverOptions.pool) || {};
     ora.at.errorLogger = errorLogger || console.error;
     ora.at.logger = logger || console.log;
     ora.at.debug = debug;
-    ora.at.pool = { conf: connConf.driverOptions || {}, src: null };
+    ora.at.pool = { conf: poolOpts, src: null };
     ora.at.connConf = connConf;
 
     ora.at.pool.conf.user = priv.username;
@@ -95,30 +118,31 @@ module.exports = class OracleDialect {
   /**
    * Executes a SQL statement
    * @param {String} sql the SQL to execute
-   * @param {Dialect~DialectExecOptions} opts the options described by the `sqler` module
+   * @param {OracleDialect~OracleDialectExecOptions} opts The execution options
    * @param {String[]} frags the frament keys within the SQL that will be retained
    * @returns {(Object[] | Error)} The result set, if any (or an error when returning errors instead of throwing them)
    */
   async exec(sql, opts, frags) {
     const ora = internal(this);
     const pool = ora.at.oracledb.getPool(ora.at.pool.alias);
-    let conn, bndp, rslts, dopts;
+    let conn, bndp, rslts, xopts;
     try {
       if (opts.binds && opts.numOfIterations) {
         throw new Error(`Cannot combine numOfIterations=${opts.numOfIterations} with bind variables=${JSON.stringify(opts.binds)}`);
       }
-      conn = await pool.getConnection();
+      const poolAttrs = opts.driverOptions && opts.driverOptions.pool;
+      conn = poolAttrs ? await pool.getConnection(poolAttrs) : await pool.getConnection();
       ora.at.meta.connections.open = pool.connectionsOpen;
       ora.at.meta.connections.inUse = pool.connectionsInUse;
       // becasue binds may be altered for SQL a clone is made
-      bndp = (opts.binds && JSON.parse(JSON.stringify(opts.binds))) || {};
-      dopts = opts.driverOptions || {};
-      if (!dopts.hasOwnProperty('outFormat')) dopts.outFormat = ora.at.oracledb.OBJECT;
+      bndp = {};
+      xopts = (opts.driverOptions && opts.driverOptions.exec) || {};
+      if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = ora.at.oracledb.OBJECT;
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
-      if (bndp) for (var prop in bndp) {
-        if (!prop || sql.indexOf(`:${prop}`) < 0) delete bndp[prop];
+      if (opts.binds) for (let prop in opts.binds) {
+        if (prop || sql.includes(`:${prop}`)) bndp[prop] = opts.binds[prop];
       }
-      rslts = opts.numOfIterations ? await conn.executeMany(sql, spts.numOfIterations, dopts) : await conn.execute(sql, bndp, dopts);
+      rslts = opts.numOfIterations ? await conn.executeMany(sql, spts.numOfIterations, xopts) : await conn.execute(sql, bndp, xopts);
       conn.close();
       return rslts.rows;
     } catch (err) {
@@ -200,6 +224,14 @@ module.exports = class OracleDialect {
    */
   get lastConnectionInUseCount() {
     return internal(this).at.meta.connections.inUse;
+  }
+
+  /**
+   * @protected
+   * @returns {Object} The oracledb driver module
+   */
+  get driver() {
+    return internal(this).at.oracledb;
   }
 };
 
