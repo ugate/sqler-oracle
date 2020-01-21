@@ -37,13 +37,17 @@ module.exports = class OracleTestDialect extends OracleDialect {
     expect(connConf.driverOptions, 'connConf.driverOptions').to.be.object();
     expect(connConf.driverOptions.oracledb, 'connConf.driverOptions.oracledb').to.be.object();
     expect(connConf.driverOptions.oracledb.autocommit, 'connConf.driverOptions.oracledb.autocommit = this.isAutocommit').to.equal(this.isAutocommit());
+    expect(this.driver, `${this.constructor.name} driver`).to.be.object();
+    for (let odb in connConf.driverOptions.oracledb) {
+      expect(connConf.driverOptions.oracledb[odb], `connConf.driverOptions.oracledb.${odb}`).to.be.equal(this.driver[odb]);
+    }
+    expect(this.driver.connectionClass, 'this.driver.connectionClass').to.be.string();
+    expect(this.driver.connectionClass, 'this.driver.connectionClass.length').to.not.be.length(0);
 
     expect(track, 'track').to.be.object();
-    expect(errorLogger, 'errorLogger').to.be.function();
-    expect(logger, 'logger').to.be.function();
+    if (errorLogger) expect(errorLogger, 'errorLogger').to.be.function();
+    if (logger) expect(logger, 'logger').to.be.function();
     expect(debug, 'debug').to.be.boolean();
-
-    expect(this.driver, `${this.constructor.name} driver`).to.be.object();
   }
 
   /**

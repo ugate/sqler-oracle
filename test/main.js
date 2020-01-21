@@ -24,5 +24,11 @@ lab.experiment(plan, () => {
   if (Tester.beforeEach) lab.beforeEach(Tester.beforeEach);
   if (Tester.afterEach) lab.afterEach(Tester.afterEach);
 
-  lab.test(`${plan}: Create, read, update, read, delete and read test rows`, { timeout: TEST_TKO }, Tester.cruds);
+  lab.test(`${plan}: CREATE`, { timeout: TEST_TKO }, Tester.create);
+  lab.test(`${plan}: READ (after create)`, { timeout: TEST_TKO }, Tester.readAfterCreate);
+  lab.test(`${plan}: UPDATE`, { timeout: TEST_TKO }, Tester.update);
+  lab.test(`${plan}: READ (after update)`, { timeout: TEST_TKO }, Tester.readAfterUpdate);
+  lab.test(`${plan}: DELETE`, { timeout: TEST_TKO }, Tester.delete);
+  lab.test(`${plan}: READ (after delete)`, { timeout: TEST_TKO }, Tester.readAfterDelete);
+
 });

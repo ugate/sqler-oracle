@@ -74,16 +74,27 @@ class Tester {
     if (cch && cch.stop) await cch.stop();
   }
 
-  /**
-   * Create, read, update, read, delete and read test rows
-   */
-  static async cruds() {
-    Labrat.header('Runing CRUD tests');
-    await rows('create');
-    await rows('read');
-    await rows('update');
-    await rows('read');
-    await rows('delete');
+  static async create() {
+    return rows('create');
+  }
+
+  static async readAfterCreate() {
+    return rows('read');
+  }
+
+  static async update() {
+    return rows('update');
+  }
+
+  static async readAfterUpdate() {
+    return rows('read');
+  }
+
+  static async delete() {
+    return rows('read');
+  }
+
+  static async readAfterDelete() {
     return rows('read', null, true);
   }
 }
@@ -133,6 +144,7 @@ function getConf() {
  * @param {Boolean} [deleted] Truthy to indicate that no rows should appear in the results
  */
 async function rows(op, opts, deleted) {
+  Labrat.header(`Running ${op}`);
   if (LOGGER.info) LOGGER.info(`Performing "${op}" on ${priv.rowCount} test records`);
 
   opts = opts || {};
