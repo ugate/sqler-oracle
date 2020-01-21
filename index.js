@@ -43,7 +43,7 @@ module.exports = class OracleDialect {
     const odbOpts = connConf.driverOptions && connConf.driverOptions.oracledb;
     if (odbOpts) {
       for (let dopt in odbOpts) {
-        if (!odbOpts.hasOwnProperty('dopt')) continue;
+        if (!odbOpts.hasOwnProperty(dopt)) continue;
         ora.at.oracledb[dopt] = odbOpts[dopt];
       }
     }
