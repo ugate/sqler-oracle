@@ -74,6 +74,25 @@ class Tester {
     if (cch && cch.stop) await cch.stop();
   }
 
+  static async multipleManagerPools() {
+    // spawn another pool in addition to the one created by before()
+    const conf = getConf();
+    const mgr = new Manager(conf);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async driverOptions() {
+    const conf = getConf(), conn = conf.db.connections[0];
+    conn.driverOptions = conn.driverOptions || {};
+    conn.driverOptions.global = conn.driverOptions.global || {};
+    conn.driverOptions.global.connectionClass = 'TestDriverOptions';
+    conn.pool = { alias: 'testDriverOptions' };
+    const mgr = new Manager(conf);
+    await mgr.init();
+    return mgr.close();
+  }
+
   static async create() {
     return rows('create');
   }
@@ -126,7 +145,7 @@ function getConf() {
           "service": "XE",
           "dialect": "oracle",
           "driverOptions": {
-            "oracledb": {
+            "global": {
               "autocommit": false
             }
           }

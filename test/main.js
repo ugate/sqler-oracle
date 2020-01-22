@@ -24,6 +24,9 @@ lab.experiment(plan, () => {
   if (Tester.beforeEach) lab.beforeEach(Tester.beforeEach);
   if (Tester.afterEach) lab.afterEach(Tester.afterEach);
 
+  lab.test(`${plan}: Multiple Manager Pools`, { timeout: TEST_TKO }, Tester.multipleManagerPools);
+  lab.test(`${plan}: Driver Options`, { timeout: TEST_TKO }, Tester.driverOptions);
+
   lab.test(`${plan}: CREATE`, { timeout: TEST_TKO }, Tester.create);
   lab.test(`${plan}: READ (after create)`, { timeout: TEST_TKO }, Tester.readAfterCreate);
   lab.test(`${plan}: UPDATE`, { timeout: TEST_TKO }, Tester.update);

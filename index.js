@@ -7,7 +7,10 @@ const Util = require('util');
 /**
  * Oracle specific {@link Manager~ConnectionOptions} from the `sqler` module
  * @typedef {Manager~ConnectionOptions} OracleDialect~ConnectionOptions
- * @property {Object} [driverOptions.oracledb] An object that will contain properties set on the global `oracledb` class
+ * @property {Object} [driverOptions] The raw configuration to set directly on the `oracledb` module, etc.
+ * @property {String} [driverOptions.sid] An alternative to the default `service` option that indicates that a unique Oracle System ID for the DB will be used instead
+ * A `tnsnames.ora` file will be created under the `TNS_ADMIN` environmental variable path.
+ * @property {Object} [driverOptions.global] An object that will contain properties set on the global `oracledb` module class
  * @property {Object} [driverOptions.pool] The pool `conf` options that will be passed into `oracledb.createPool({ conf })`.
  * __Using any of the generic `pool.someOption` will override the `conf` options set on `driverOptions.pool`.__
  */
@@ -30,35 +33,36 @@ module.exports = class OracleDialect {
    * @param {Manager~PrivateOptions} priv the username that will be used to connect to the database
    * @param {OracleDialect~ConnectionOptions} connConf the individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
    * @param {Object} [track={}] tracking object that will be used to prevent possible file overwrites of the TNS file when multiple {@link OracleDB}s are used
-   * @param {function} [errorLogger=console.error] the logging function for errors
+   * @param {function} [errorLogger] the logging function for errors
    * @param {function} [logger=console.log] the logging function for non-errors
    * @param {Boolean} [debug] the flag that indicates when debugging is turned on
    */
-  constructor(priv, connConf, track = {}, errorLogger = console.error, logger = console.log, debug) {
-    const ora = internal(this);
+  constructor(priv, connConf, track = {}, errorLogger, logger, debug) {
+    const dlt = internal(this);
 
-    ora.at.oracledb = require('oracledb');
-    ora.at.oracledb.Promise = Promise; // tell Oracle to use the built-in promise
+    dlt.at.oracledb = require('oracledb');
+    dlt.at.oracledb.Promise = Promise; // tell Oracle to use the built-in promise
 
-    const odbOpts = connConf.driverOptions && connConf.driverOptions.oracledb;
+    const odbOpts = connConf.driverOptions && connConf.driverOptions.global;
     if (odbOpts) {
       for (let dopt in odbOpts) {
         if (!odbOpts.hasOwnProperty(dopt)) continue;
-        ora.at.oracledb[dopt] = odbOpts[dopt];
+        dlt.at.oracledb[dopt] = odbOpts[dopt];
       }
     }
-    if (!ora.at.oracledb.connectionClass) ora.at.oracledb.connectionClass = 'DBPOOL';
+    if (!dlt.at.oracledb.connectionClass) dlt.at.oracledb.connectionClass = 'SqlerOracle';
 
-    const poolOpts = (connConf.driverOptions && connConf.driverOptions.pool) || {};
-    ora.at.errorLogger = errorLogger || console.error;
-    ora.at.logger = logger || console.log;
-    ora.at.debug = debug;
-    ora.at.pool = { conf: poolOpts, src: null };
-    ora.at.connConf = connConf;
+    const poolOpts = connConf.pool || {};
+    poolOpts.alias = poolOpts.alias || `sqlerOracleGenAlias${Math.floor(Math.random() * 10000)}`;
+    dlt.at.errorLogger = errorLogger;
+    dlt.at.logger = logger;
+    dlt.at.debug = debug;
+    dlt.at.pool = { conf: poolOpts, src: null, orcaleConf: (connConf.driverOptions && connConf.driverOptions.pool) || {} };
+    dlt.at.connConf = connConf;
 
-    ora.at.pool.conf.user = priv.username;
-    ora.at.pool.conf.password = priv.password;
-    ora.at.meta = { connections: { open: 0, inUse: 0 } };
+    dlt.at.pool.orcaleConf.user = priv.username;
+    dlt.at.pool.orcaleConf.password = priv.password;
+    dlt.at.meta = { connections: { open: 0, inUse: 0 } };
 
     const host = connConf.host || priv.host, port = connConf.port || priv.port, protocol = connConf.protocol || priv.protocol;
     if (!host) throw new Error(`Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
@@ -73,20 +77,18 @@ module.exports = class OracleDialect {
       } else if (++track.tnsCnt) {
         Fs.appendFileSync(fpth, fdta);
       }
-      ora.at.pool.conf.connectString = connConf.driverOptions.sid;
-      ora.at.connectionType = 'SID';
+      dlt.at.pool.orcaleConf.connectString = connConf.driverOptions.sid;
+      dlt.at.connectionType = 'SID';
     } else {
-      ora.at.pool.conf.connectString = `${host}${(connConf.service && ('/' + connConf.service)) || ''}${(port && (':' + port)) || ''}`;
-      ora.at.connectionType = 'Service';
+      dlt.at.pool.orcaleConf.connectString = `${host}${(connConf.service && ('/' + connConf.service)) || ''}${(port && (':' + port)) || ''}`;
+      dlt.at.connectionType = 'Service';
     }
-    ora.at.pool.conf.poolMin = connConf.pool && connConf.pool.min;
-    ora.at.pool.conf.poolMax = connConf.pool && connConf.pool.max;
-    ora.at.pool.conf.poolTimeout = connConf.pool && connConf.pool.idle;
-    ora.at.pool.conf.poolIncrement = connConf.pool && connConf.pool.increment;
-    ora.at.pool.conf.queueTimeout = connConf.pool && connConf.pool.timeout;
-    ora.at.pool.conf.poolAlias = connConf.pool && connConf.pool.alias;
-
-    ora.at.log = createLog(ora);
+    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolMin')) dlt.at.pool.orcaleConf.poolMin = poolOpts.min;
+    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolMax')) dlt.at.pool.orcaleConf.poolMax = poolOpts.max;
+    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolTimeout')) dlt.at.pool.orcaleConf.poolTimeout = poolOpts.idle;
+    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolIncrement')) dlt.at.pool.orcaleConf.poolIncrement = poolOpts.increment;
+    if (!dlt.at.pool.orcaleConf.hasOwnProperty('queueTimeout')) dlt.at.pool.orcaleConf.queueTimeout = poolOpts.timeout;
+    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolAlias')) dlt.at.pool.orcaleConf.poolAlias = poolOpts.alias;
   }
 
   /**
@@ -95,22 +97,32 @@ module.exports = class OracleDialect {
    * @returns {Object} the Oracle connection pool (or an error when returning errors instead of throwing them)
    */
   async init(opts) {
-    const ora = internal(this), numSql = (opts && opts.numOfPreparedStmts && opts.numOfPreparedStmts) || 0;
+    const dlt = internal(this), numSql = (opts && opts.numOfPreparedStmts && opts.numOfPreparedStmts) || 0;
     // statement cache should account for the number of prepared SQL statements/files by a factor of 3x to accomodate up to 3x fragments for each SQL file
-    ora.at.pool.conf.stmtCacheSize = (numSql * 3) || 30;
-    var oraPool;
+    dlt.at.pool.orcaleConf.stmtCacheSize = (numSql * 3) || 30;
+    let oraPool;
     try {
-      oraPool = await ora.at.oracledb.createPool(ora.at.pool.conf);
-      ora.at.pool.alias = oraPool.poolAlias;
-      ora.at.log(`Oracle ${ora.at.connectionType} connection pool "${oraPool.poolAlias}" created with poolPingInterval=${oraPool.poolPingInterval} ` +
-        `stmtCacheSize=${oraPool.stmtCacheSize} (${numSql} SQL files) poolTimeout=${oraPool.poolTimeout} poolIncrement=${oraPool.poolIncrement} ` +
-        `poolMin=${oraPool.poolMin} poolMax=${oraPool.poolMax}`);
+      try {
+        oraPool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
+      } catch (err) {
+        // consume any errors
+      }
+      if (!oraPool) {
+        oraPool = await dlt.at.oracledb.createPool(dlt.at.pool.orcaleConf);
+      }
+      if (dlt.at.logger) {
+        dlt.at.logger(`Oracle ${dlt.at.connectionType} connection pool "${oraPool.poolAlias}" created with poolPingInterval=${oraPool.poolPingInterval} ` +
+          `stmtCacheSize=${oraPool.stmtCacheSize} (${numSql} SQL files) poolTimeout=${oraPool.poolTimeout} poolIncrement=${oraPool.poolIncrement} ` +
+          `poolMin=${oraPool.poolMin} poolMax=${oraPool.poolMax}`);
+      }
       return oraPool;
     } catch (err) {
-      ora.at.log(`Unable to create Oracle connection pool ${Util.inspect(err)}`);
-      const pconf = Object.assign({}, ora.at.pool.conf), perr = new Error(`Unable to create Oracle DB pool for ${Util.inspect((pconf.password = '***') && pconf)}`);
+      if (dlt.at.errorLogger) {
+        dlt.at.errorLogger(`Unable to create Oracle connection pool ${Util.inspect(err)}`);
+      }
+      const pconf = Object.assign({}, dlt.at.pool.orcaleConf), perr = new Error(`Unable to create Oracle DB pool for ${Util.inspect((pconf.password = '***') && pconf)}`);
       perr.cause = err;
-      if (ora.at.connConf.returnErrors) return perr;
+      if (dlt.at.connConf.returnErrors) return perr;
       throw perr;
     }
   }
@@ -123,8 +135,8 @@ module.exports = class OracleDialect {
    * @returns {(Object[] | Error)} The result set, if any (or an error when returning errors instead of throwing them)
    */
   async exec(sql, opts, frags) {
-    const ora = internal(this);
-    const pool = ora.at.oracledb.getPool(ora.at.pool.alias);
+    const dlt = internal(this);
+    const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
     let conn, bndp, rslts, xopts;
     try {
       if (opts.binds && opts.numOfIterations) {
@@ -132,12 +144,12 @@ module.exports = class OracleDialect {
       }
       const poolAttrs = opts.driverOptions && opts.driverOptions.pool;
       conn = poolAttrs ? await pool.getConnection(poolAttrs) : await pool.getConnection();
-      ora.at.meta.connections.open = pool.connectionsOpen;
-      ora.at.meta.connections.inUse = pool.connectionsInUse;
+      dlt.at.meta.connections.open = pool.connectionsOpen;
+      dlt.at.meta.connections.inUse = pool.connectionsInUse;
       // becasue binds may be altered for SQL a clone is made
       bndp = {};
       xopts = (opts.driverOptions && opts.driverOptions.exec) || {};
-      if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = ora.at.oracledb.OBJECT;
+      if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.oracledb.OBJECT;
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
       if (opts.binds) for (let prop in opts.binds) {
         if (prop || sql.includes(`:${prop}`)) bndp[prop] = opts.binds[prop];
@@ -154,13 +166,15 @@ module.exports = class OracleDialect {
         }
       }
       const msg = ` (BINDS: ${bndp ? JSON.stringify(bndp) : 'N/A'}, FRAGS: ${frags ? Array.isArray(frags) ? frags.join(', ') : frags : 'N/A'})`;
-      ora.at.log(`Failed to execute the following SQL: ${msg}\n${sql}`, err);
+      if (dlt.at.errorLogger) {
+        dlt.at.errorLogger(`Failed to execute the following SQL: ${msg}\n${sql}`, err);
+      }
       err.message += msg;
       err.sql = sql;
       err.sqlOptions = opts;
       err.sqlBindParams = bndp;
       err.sqlResults = rslts;
-      if (ora.at.connConf.returnErrors) return err;
+      if (dlt.at.connConf.returnErrors) return err;
       throw err;
     }
   }
@@ -189,15 +203,19 @@ module.exports = class OracleDialect {
    * @returns {(Integer | Error)} The number of connections closed (or an error when returning errors instead of throwing them)
    */
   async close(opts) {
-    const ora = internal(this);
+    const dlt = internal(this);
     try {
-      pool = ora.at.oracledb.getPool(ora.at.pool.alias);
-      ora.at.log(`Closing Oracle connection pool "${ora.at.pool.alias}"${ora.tx.pending ? `(uncommitted transactions: ${opts.tx.pending})` : ''}`);
+      const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
+      if (dlt.at.logger) {
+        dlt.at.logger(`Closing Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}"${opts.tx.pending ? `(uncommitted transactions: ${opts.tx.pending})` : ''}`);
+      }
       pool && pool.close();
       return opts.tx.pending;
     } catch (err) {
-      ora.at.log(`Failed to close Oracle connection pool "${ora.at.pool.alias}"${ora.tx.pending ? `(uncommitted transactions: ${opts.tx.pending})` : ''}`, err);
-      if (ora.at.connConf.returnErrors) return err;
+      if (dlt.at.errorLogger) {
+        dlt.at.errorLogger(`Failed to close Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}"${opts.tx.pending ? `(uncommitted transactions: ${opts.tx.pending})` : ''}`, err);
+      }
+      if (dlt.at.connConf.returnErrors) return err;
       throw err;
     }
   }
@@ -208,8 +226,8 @@ module.exports = class OracleDialect {
    * @returns {Boolean} A flag indicating that transactions are setup to autocommit
    */
   isAutocommit(opts) {
-    const ora = internal(this);
-    return opts && opts.driverOptions && opts.driverOptions.hasOwnProperty('autocommit') ? opts.driverOptions.autocommit : ora.at.oracledb.autocommit || false;
+    const dlt = internal(this);
+    return opts && opts.driverOptions && opts.driverOptions.global && opts.driverOptions.global.hasOwnProperty('autocommit') ? opts.driverOptions.global.autocommit : dlt.at.oracledb.autocommit || false;
   }
 
   /**
@@ -239,12 +257,12 @@ module.exports = class OracleDialect {
  * Executes a function by name that resides on the Oracle connection
  * @private
  * @param {String} name The name of the function that will be called on the connection
- * @param {Object} ora The internal Oracle object instance
+ * @param {Object} dlt The internal Oracle object instance
  * @param {Dialect~DialectOptions} opts The {@link Dialect~DialectOptions}
  * @returns {Integer} The `opts.tx.pending` value
  */
-async function operation(name, ora, opts) {
-  const pool = ora.at.oracledb.getPool(ora.at.pool.alias);
+async function operation(name, dlt, opts) {
+  const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
   let conn;
   try {
     conn = await pool.getConnection();
@@ -258,26 +276,13 @@ async function operation(name, ora, opts) {
         err.closeError = cerr;
       }
     }
-    ora.at.log(`Failed to ${name} ${opts.tx.pending} Oracle transaction(s) with options: ${JSON.stringify(opts)}`, err);
-    if (ora.at.connConf.returnErrors) return err;
+    if (dlt.at.errorLogger) {
+      dlt.at.errorLogger(`Failed to ${name} ${opts.tx.pending} Oracle transaction(s) with options: ${JSON.stringify(opts)}`, err);
+    }
+    if (dlt.at.connConf.returnErrors) return err;
     throw err;
   }
   return opts.tx.pending;
-}
-
-/**
- * Creates a logging function that logs each argument to either an error logger when the argument is an `Error` or a non-error logger
- * @private
- * @param {Object} ora The private Oracle instance
- * @returns {Function} A function that logs each argument using `ora`
- */
-function createLog(ora) {
-  return function log() {
-    for (let arg in arguments) {
-      if (arguments[arg] instanceof Error) ora.at.errorLogger(arguments[arg]);
-      else ora.at.logger(arguments[arg]);
-    }
-  };
 }
 
 // private mapping

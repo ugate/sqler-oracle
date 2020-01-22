@@ -35,11 +35,11 @@ module.exports = class OracleTestDialect extends OracleDialect {
     expect(connConf.dialect, 'connConf.dialect.length').to.not.be.empty();
 
     expect(connConf.driverOptions, 'connConf.driverOptions').to.be.object();
-    expect(connConf.driverOptions.oracledb, 'connConf.driverOptions.oracledb').to.be.object();
-    expect(connConf.driverOptions.oracledb.autocommit, 'connConf.driverOptions.oracledb.autocommit = this.isAutocommit').to.equal(this.isAutocommit());
+    expect(connConf.driverOptions.global, 'connConf.driverOptions.global').to.be.object();
+    expect(connConf.driverOptions.global.autocommit, 'connConf.driverOptions.global.autocommit = this.isAutocommit').to.equal(this.isAutocommit());
     expect(this.driver, `${this.constructor.name} driver`).to.be.object();
-    for (let odb in connConf.driverOptions.oracledb) {
-      expect(connConf.driverOptions.oracledb[odb], `connConf.driverOptions.oracledb.${odb}`).to.be.equal(this.driver[odb]);
+    for (let odb in connConf.driverOptions.global) {
+      expect(connConf.driverOptions.global[odb], `connConf.driverOptions.global.${odb} = this.driver.${odb}`).to.be.equal(this.driver[odb]);
     }
     expect(this.driver.connectionClass, 'this.driver.connectionClass').to.be.string();
     expect(this.driver.connectionClass, 'this.driver.connectionClass.length').to.not.be.length(0);
