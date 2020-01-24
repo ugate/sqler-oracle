@@ -15,14 +15,16 @@ module.exports = class OracleTestDialect extends OracleDialect {
     super(priv, connConf, track, errorLogger, logger, debug);
 
     expect(priv, 'priv').to.be.object();
-    expect(priv.host, 'priv.host').to.be.string();
-    expect(priv.host, 'priv.host.length').to.not.be.empty();
-    expect(priv.username, 'priv.username').to.be.string();
-    expect(priv.username, 'priv.username.length').to.not.be.empty();
-    expect(priv.password, 'priv.password').to.be.string();
-    expect(priv.password, 'priv.password.length').to.not.be.empty();
 
     expect(connConf, 'connConf').to.be.object();
+    
+    expect(connConf.host || priv.host, 'priv.host').to.be.string();
+    expect(connConf.host || priv.host, 'priv.host.length').to.not.be.empty();
+    expect(connConf.username || priv.username, 'priv.username').to.be.string();
+    expect(connConf.username || priv.username, 'priv.username.length').to.not.be.empty();
+    expect(connConf.password || priv.password, 'priv.password').to.be.string();
+    expect(connConf.password || priv.password, 'priv.password.length').to.not.be.empty();
+
     expect(connConf.id, 'connConf.id').to.be.string();
     expect(connConf.id, 'connConf.id.length').to.not.be.empty();
     expect(connConf.name, 'connConf.name').to.be.string();
@@ -34,13 +36,7 @@ module.exports = class OracleTestDialect extends OracleDialect {
     expect(connConf.dialect, 'connConf.dialect').to.be.string();
     expect(connConf.dialect, 'connConf.dialect.length').to.not.be.empty();
 
-    expect(connConf.driverOptions, 'connConf.driverOptions').to.be.object();
-    expect(connConf.driverOptions.global, 'connConf.driverOptions.global').to.be.object();
-    expect(connConf.driverOptions.global.autocommit, 'connConf.driverOptions.global.autocommit = this.isAutocommit').to.equal(this.isAutocommit());
-    expect(this.driver, `${this.constructor.name} driver`).to.be.object();
-    for (let odb in connConf.driverOptions.global) {
-      expect(connConf.driverOptions.global[odb], `connConf.driverOptions.global.${odb} = this.driver.${odb}`).to.be.equal(this.driver[odb]);
-    }
+    expectDriverOptions(connConf, this);
     expect(this.driver.connectionClass, 'this.driver.connectionClass').to.be.string();
     expect(this.driver.connectionClass, 'this.driver.connectionClass.length').to.not.be.length(0);
 
@@ -102,6 +98,23 @@ module.exports = class OracleTestDialect extends OracleDialect {
     return super.isAutocommit(opts);
   }
 };
+
+/**
+ * Expects the oracle driver options (when present)
+ * @param {Manager~ConnectionOptions} opts The connection options to check
+ * @param {OracleTestDialect} dlt The test dialect
+ */
+function expectDriverOptions(opts, dlt) {
+  if (!opts.driverOptions) return;
+  expect(opts.driverOptions, 'connConf.driverOptions').to.be.object();
+  if (!opts.global) return;
+  expect(opts.driverOptions.global, 'connConf.driverOptions.global').to.be.object();
+  expect(opts.driverOptions.global.autocommit, 'connConf.driverOptions.global.autocommit = dlt.isAutocommit').to.equal(dlt.isAutocommit());
+  expect(dlt.driver, `${dlt.constructor.name} driver`).to.be.object();
+  for (let odb in opts.driverOptions.global) {
+    expect(opts.driverOptions.global[odb], `connConf.driverOptions.global.${odb} = dlt.driver.${odb}`).to.be.equal(dlt.driver[odb]);
+  }
+}
 
 // private mapping
 let map = new WeakMap();

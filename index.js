@@ -43,7 +43,8 @@ module.exports = class OracleDialect {
     dlt.at.oracledb = require('oracledb');
     dlt.at.oracledb.Promise = Promise; // tell Oracle to use the built-in promise
 
-    const odbOpts = connConf.driverOptions && connConf.driverOptions.global;
+    const hasDrvrOpts = !!connConf.driverOptions;
+    const odbOpts = hasDrvrOpts && connConf.driverOptions.global;
     if (odbOpts) {
       for (let dopt in odbOpts) {
         if (!odbOpts.hasOwnProperty(dopt)) continue;
@@ -57,7 +58,10 @@ module.exports = class OracleDialect {
     dlt.at.errorLogger = errorLogger;
     dlt.at.logger = logger;
     dlt.at.debug = debug;
-    dlt.at.pool = { conf: poolOpts, src: null, orcaleConf: (connConf.driverOptions && connConf.driverOptions.pool) || {} };
+    dlt.at.pool = {
+      conf: poolOpts,
+      orcaleConf: (hasDrvrOpts && connConf.driverOptions.pool) || {}
+    };
     dlt.at.connConf = connConf;
 
     dlt.at.pool.orcaleConf.user = priv.username;
@@ -67,15 +71,15 @@ module.exports = class OracleDialect {
     const host = connConf.host || priv.host, port = connConf.port || priv.port, protocol = connConf.protocol || priv.protocol;
     if (!host) throw new Error(`Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
 
-    if (connConf.driverOptions && connConf.driverOptions.sid) {
+    if (hasDrvrOpts && connConf.driverOptions.sid) {
       process.env.TNS_ADMIN = priv.privatePath;
-      const fpth = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
+      dlt.at.meta.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
       const fdta = `${connConf.driverOptions.sid} = (DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol || 'TCP'})(HOST = ${host})(PORT = ${port || 1521}))` +
         `(CONNECT_DATA = (SERVER = POOLED)(SID = ${connConf.driverOptions.sid})))${require('os').EOL}`;
       if (typeof track.tnsCnt === 'undefined' && (track.tnsCnt = 1)) {
-        Fs.writeFileSync(fpth, fdta);
+        Fs.writeFileSync(dlt.at.meta.tns, fdta);
       } else if (++track.tnsCnt) {
-        Fs.appendFileSync(fpth, fdta);
+        Fs.appendFileSync(dlt.at.meta.tns, fdta);
       }
       dlt.at.pool.orcaleConf.connectString = connConf.driverOptions.sid;
       dlt.at.connectionType = 'SID';
@@ -142,13 +146,14 @@ module.exports = class OracleDialect {
       if (opts.binds && opts.numOfIterations) {
         throw new Error(`Cannot combine numOfIterations=${opts.numOfIterations} with bind variables=${JSON.stringify(opts.binds)}`);
       }
-      const poolAttrs = opts.driverOptions && opts.driverOptions.pool;
+      const hasDrvrOpts = !!opts.driverOptions;
+      const poolAttrs = hasDrvrOpts && opts.driverOptions.pool;
       conn = poolAttrs ? await pool.getConnection(poolAttrs) : await pool.getConnection();
       dlt.at.meta.connections.open = pool.connectionsOpen;
       dlt.at.meta.connections.inUse = pool.connectionsInUse;
       // becasue binds may be altered for SQL a clone is made
       bndp = {};
-      xopts = (opts.driverOptions && opts.driverOptions.exec) || {};
+      xopts = (hasDrvrOpts && opts.driverOptions.exec) || {};
       if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.oracledb.OBJECT;
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
       if (opts.binds) for (let prop in opts.binds) {
@@ -210,6 +215,15 @@ module.exports = class OracleDialect {
         dlt.at.logger(`Closing Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}"${opts.tx.pending ? `(uncommitted transactions: ${opts.tx.pending})` : ''}`);
       }
       pool && pool.close();
+      if (dlt.at.meta.tns) {
+        try {
+          await Fs.promises.unlink(dlt.at.meta.tns);
+        } catch (err) {
+          if (dlt.at.errorLogger) {
+            dlt.at.errorLogger(`Failed to remove TNS file at "${dlt.at.meta.tns}" for pool "${dlt.at.pool.orcaleConf.poolAlias}"${opts.tx.pending ? `(uncommitted transactions: ${opts.tx.pending})` : ''}`, err);
+          }
+        }
+      }
       return opts.tx.pending;
     } catch (err) {
       if (dlt.at.errorLogger) {

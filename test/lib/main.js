@@ -3,6 +3,7 @@
 // TODO : ESM comment the following lines...
 const { Labrat, LOGGER } = require('@ugate/labrat');
 const { Manager } = require('sqler');
+const Path = require('path');
 const Fs = require('fs');
 const Os = require('os');
 const { expect } = require('@hapi/code');
@@ -74,9 +75,34 @@ class Tester {
     if (cch && cch.stop) await cch.stop();
   }
 
+  static async confHostMissing() {
+    const conf = getConf();
+    conf.univ.db.testId.host = '';
+    new Manager(conf);
+  }
+
   static async multipleManagerPools() {
     // spawn another pool in addition to the one created by before()
-    const conf = getConf();
+    const conf = getConf(), conn = conf.db.connections[0];
+    conn.host = conf.univ.db.testId.host;
+    conn.port = conf.univ.db.testId.port;
+    conn.protocol = conf.univ.db.testId.protocol;
+    conf.univ.db.testId.host = null;
+    conf.univ.db.testId.port = null;
+    conf.univ.db.testId.protocol = null;
+    const mgr = new Manager(conf);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async protoGlobals() {
+    // spawn another pool in addition to the one created by before()
+    const conf = getConf(), conn = conf.db.connections[0];
+    conn.driverOptions.pool = null;
+    const TestGlobal = class {};
+    TestGlobal.prototype.skip = 'Skip adding this global property';
+    conn.driverOptions.global = new TestGlobal();
+    conn.driverOptions.global.autocommit = false;
     const mgr = new Manager(conf);
     await mgr.init();
     return mgr.close();
@@ -91,6 +117,26 @@ class Tester {
     const mgr = new Manager(conf);
     await mgr.init();
     return mgr.close();
+  }
+
+  static async managerSid() {
+    const conf = getConf(), conn = conf.db.connections[0];
+    conn.driverOptions.sid = conn.service;
+    const mgr = new Manager(conf);
+    const tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
+
+    await Fs.promises.access(tns, Fs.constants.F_OK);
+
+    await mgr.init();
+    await mgr.close();
+
+    let ferr;
+    try {
+      await Fs.promises.access(tns)
+    } catch (err) {
+      ferr = err;
+    }
+    expect(ferr).to.be.error();
   }
 
   static async create() {
