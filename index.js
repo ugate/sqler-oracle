@@ -9,10 +9,12 @@ const Util = require('util');
  * @typedef {Manager~ConnectionOptions} OracleDialect~ConnectionOptions
  * @property {Object} [driverOptions] The raw configuration to set directly on the `oracledb` module, etc.
  * @property {String} [driverOptions.sid] An alternative to the default `service` option that indicates that a unique Oracle System ID for the DB will be used instead
- * A `tnsnames.ora` file will be created under the `TNS_ADMIN` environmental variable path.
+ * A `tnsnames.ora` file will be created under the `privatePath`. The `TNS_ADMIN` environmental variable will also be set the `privatePath` when using this option.
  * @property {Object} [driverOptions.global] An object that will contain properties set on the global `oracledb` module class
  * @property {Object} [driverOptions.pool] The pool `conf` options that will be passed into `oracledb.createPool({ conf })`.
  * __Using any of the generic `pool.someOption` will override the `conf` options set on `driverOptions.pool`.__
+ * @property {Boolean} [driverOptions.pingOnInit=true] A truthy flag that indicates if a _ping_ will be performed after the connection pool is created when
+ * {@link OracleDialect.init} is called.
  */
 
 /**
@@ -62,31 +64,34 @@ module.exports = class OracleDialect {
       conf: poolOpts,
       orcaleConf: (hasDrvrOpts && connConf.driverOptions.pool) || {}
     };
+    dlt.at.pingOnInit = hasDrvrOpts && connConf.driverOptions.hasOwnProperty('pingOnInit') ? !!connConf.driverOptions.pingOnInit : true;
     dlt.at.connConf = connConf;
 
     dlt.at.pool.orcaleConf.user = priv.username;
     dlt.at.pool.orcaleConf.password = priv.password;
     dlt.at.meta = { connections: { open: 0, inUse: 0 } };
 
-    const host = connConf.host || priv.host, port = connConf.port || priv.port, protocol = connConf.protocol || priv.protocol;
+    const host = connConf.host || priv.host, port = connConf.port || priv.port || 1521, protocol = connConf.protocol || priv.protocol || 'TCP';
     if (!host) throw new Error(`Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
 
     if (hasDrvrOpts && connConf.driverOptions.sid) {
       process.env.TNS_ADMIN = priv.privatePath;
       dlt.at.meta.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
-      const fdta = `${connConf.driverOptions.sid} = (DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol || 'TCP'})(HOST = ${host})(PORT = ${port || 1521}))` +
+      const fdta = `${connConf.driverOptions.sid} = (DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol})(HOST = ${host})(PORT = ${port}))` +
         `(CONNECT_DATA = (SERVER = POOLED)(SID = ${connConf.driverOptions.sid})))${require('os').EOL}`;
-      if (typeof track.tnsCnt === 'undefined' && (track.tnsCnt = 1)) {
+      if (typeof track.tnsCnt === 'undefined') {
         Fs.writeFileSync(dlt.at.meta.tns, fdta);
-      } else if (++track.tnsCnt) {
+        track.tnsCnt = 1;
+      } else {
         Fs.appendFileSync(dlt.at.meta.tns, fdta);
+        track.tnsCnt++;
       }
       dlt.at.pool.orcaleConf.connectString = connConf.driverOptions.sid;
       dlt.at.connectionType = 'SID';
-    } else {
-      dlt.at.pool.orcaleConf.connectString = `${host}${(connConf.service && ('/' + connConf.service)) || ''}${(port && (':' + port)) || ''}`;
+    } else if (connConf.service) {
+      dlt.at.pool.orcaleConf.connectString = `${host}/${connConf.service}:${port}`;
       dlt.at.connectionType = 'Service';
-    }
+    } else throw new Error(`Missing ${connConf.dialect} "service" or "sid" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
     if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolMin')) dlt.at.pool.orcaleConf.poolMin = poolOpts.min;
     if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolMax')) dlt.at.pool.orcaleConf.poolMax = poolOpts.max;
     if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolTimeout')) dlt.at.pool.orcaleConf.poolTimeout = poolOpts.idle;
@@ -101,33 +106,38 @@ module.exports = class OracleDialect {
    * @returns {Object} the Oracle connection pool (or an error when returning errors instead of throwing them)
    */
   async init(opts) {
-    const dlt = internal(this), numSql = (opts && opts.numOfPreparedStmts && opts.numOfPreparedStmts) || 0;
+    const dlt = internal(this), numSql = opts.numOfPreparedStmts;
     // statement cache should account for the number of prepared SQL statements/files by a factor of 3x to accomodate up to 3x fragments for each SQL file
-    dlt.at.pool.orcaleConf.stmtCacheSize = (numSql * 3) || 30;
+    dlt.at.pool.orcaleConf.stmtCacheSize = numSql * 3;
     let oraPool;
     try {
-      try {
-        oraPool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
-      } catch (err) {
-        // consume any errors
-      }
-      if (!oraPool) {
-        oraPool = await dlt.at.oracledb.createPool(dlt.at.pool.orcaleConf);
-      }
+      oraPool = await dlt.at.oracledb.createPool(dlt.at.pool.orcaleConf);
       if (dlt.at.logger) {
         dlt.at.logger(`Oracle ${dlt.at.connectionType} connection pool "${oraPool.poolAlias}" created with poolPingInterval=${oraPool.poolPingInterval} ` +
           `stmtCacheSize=${oraPool.stmtCacheSize} (${numSql} SQL files) poolTimeout=${oraPool.poolTimeout} poolIncrement=${oraPool.poolIncrement} ` +
           `poolMin=${oraPool.poolMin} poolMax=${oraPool.poolMax}`);
       }
+      if (dlt.at.pingOnInit) {
+        // validate by ping connection from pool
+        const conn = await oraPool.getConnection();
+        try {
+          await conn.ping();
+        } finally {
+          try {
+            await conn.close();
+          } catch (err) {
+            // consume ping connection close errors
+          }
+        }
+      }
       return oraPool;
     } catch (err) {
-      if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Unable to create Oracle connection pool ${Util.inspect(err)}`);
-      }
-      const pconf = Object.assign({}, dlt.at.pool.orcaleConf), perr = new Error(`Unable to create Oracle DB pool for ${Util.inspect((pconf.password = '***') && pconf)}`);
-      perr.cause = err;
-      if (dlt.at.connConf.returnErrors) return perr;
-      throw perr;
+      const msg = `${oraPool ? 'Unable to ping connection from' : 'Unable to create'} Oracle connection pool`;
+      if (dlt.at.errorLogger) dlt.at.errorLogger(`${msg} ${Util.inspect(err)}`);
+      const pconf = Object.assign({}, dlt.at.pool.orcaleConf);
+      err.message = `${err.message}\n${msg} for ${Util.inspect((pconf.password = '***') && pconf)}`;
+      if (dlt.at.connConf.returnErrors) return err;
+      throw err;
     }
   }
 
@@ -143,8 +153,9 @@ module.exports = class OracleDialect {
     const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
     let conn, bndp, rslts, xopts;
     try {
-      if (opts.binds && opts.numOfIterations) {
-        throw new Error(`Cannot combine numOfIterations=${opts.numOfIterations} with bind variables=${JSON.stringify(opts.binds)}`);
+      if (opts.binds 
+        && opts.numOfIterations > 1) {
+        throw new Error(`Cannot combine options.numOfIterations=${opts.numOfIterations} with bind variables`);
       }
       const hasDrvrOpts = !!opts.driverOptions;
       const poolAttrs = hasDrvrOpts && opts.driverOptions.pool;
@@ -159,7 +170,7 @@ module.exports = class OracleDialect {
       if (opts.binds) for (let prop in opts.binds) {
         if (prop || sql.includes(`:${prop}`)) bndp[prop] = opts.binds[prop];
       }
-      rslts = opts.numOfIterations ? await conn.executeMany(sql, spts.numOfIterations, xopts) : await conn.execute(sql, bndp, xopts);
+      rslts = opts.numOfIterations > 1 ? await conn.executeMany(sql, opts.numOfIterations, xopts) : await conn.execute(sql, bndp, xopts);
       conn.close();
       return rslts.rows;
     } catch (err) {

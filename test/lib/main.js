@@ -13,7 +13,7 @@ const { expect } = require('@hapi/code');
 // TODO : import * as Os from 'os';
 // TODO : import { expect } from '@hapi/code';
 
-const priv = { mgr: null, cache: null, rowCount: 1, mgrLogit: !!LOGGER.info };
+const priv = { mgr: null, cache: null, rowCount: 100, mgrLogit: !!LOGGER.info };
 
 // TODO : ESM uncomment the following line...
 // export
@@ -78,69 +78,109 @@ class Tester {
   static async confHostMissing() {
     const conf = getConf();
     conf.univ.db.testId.host = '';
-    new Manager(conf);
+    new Manager(conf, priv.cache, priv.mgrLogit);
   }
 
-  static async multipleManagerPools() {
-    // spawn another pool in addition to the one created by before()
-    const conf = getConf(), conn = conf.db.connections[0];
-    conn.host = conf.univ.db.testId.host;
-    conn.port = conf.univ.db.testId.port;
-    conn.protocol = conf.univ.db.testId.protocol;
-    conf.univ.db.testId.host = null;
-    conf.univ.db.testId.port = null;
-    conf.univ.db.testId.protocol = null;
-    const mgr = new Manager(conf);
+  static async confServiceMissing() {
+    const conf = getConf();
+    conf.db.connections[0].service = false;
+    new Manager(conf, priv.cache, priv.mgrLogit);
+  }
+
+  static async confDriverOptionsMissing() {
+    const conf = getConf();
+    conf.db.connections[0].driverOptions = false;
+    new Manager(conf, priv.cache, priv.mgrLogit);
+  }
+
+  static async confCredentialsInvalid() {
+    const conf = getConf();
+    conf.univ.db.testId.password = 'fakePassowrd';
+    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
     await mgr.init();
     return mgr.close();
   }
 
-  static async protoGlobals() {
-    // spawn another pool in addition to the one created by before()
+  static async confDriverOptionsGlobalNonOwnProps() {
     const conf = getConf(), conn = conf.db.connections[0];
-    conn.driverOptions.pool = null;
+    conn.driverOptions.pool = false;
     const TestGlobal = class {};
     TestGlobal.prototype.skip = 'Skip adding this global property';
     conn.driverOptions.global = new TestGlobal();
     conn.driverOptions.global.autocommit = false;
-    const mgr = new Manager(conf);
+    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
     await mgr.init();
     return mgr.close();
   }
 
-  static async driverOptions() {
+  static async confDriverOptionsConnAndPoolNames() {
     const conf = getConf(), conn = conf.db.connections[0];
     conn.driverOptions = conn.driverOptions || {};
     conn.driverOptions.global = conn.driverOptions.global || {};
     conn.driverOptions.global.connectionClass = 'TestDriverOptions';
     conn.pool = { alias: 'testDriverOptions' };
-    const mgr = new Manager(conf);
+    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
     await mgr.init();
     return mgr.close();
   }
 
-  static async managerSid() {
+  static async confDriverOptionsSid() {
+    return expectSid(getConf());
+  }
+
+  static async confDriverOptionsSidDefaults() {
     const conf = getConf(), conn = conf.db.connections[0];
-    conn.driverOptions.sid = conn.service;
-    const mgr = new Manager(conf);
-    const tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
+    conf.univ.db.testId.port = conn.port = false;
+    conf.univ.db.testId.protocol = conn.protocol = false;
+    return expectSid(conf);
+  }
 
-    await Fs.promises.access(tns, Fs.constants.F_OK);
+  static async confDriverOptionsSidMultiple() {
+    const conf = getConf(), conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
+    conn2.name += '2';
+    conf.db.connections.push(conn2);
+    return expectSid(conf);
+  }
 
+  static async confDriverOptionsPool() {
+    const conf = getConf(), conn = conf.db.connections[0];
+    conn.driverOptions = conn.driverOptions || {};
+    conn.driverOptions.pool = conn.driverOptions.pool || {};
+    conn.driverOptions.pool.poolMin = 5;
+    conn.driverOptions.pool.poolMax = 10;
+    conn.driverOptions.pool.poolTimeout = 6000;
+    conn.driverOptions.pool.poolIncrement = 2;
+    conn.driverOptions.pool.queueTimeout = 5000;
+    conn.driverOptions.pool.poolAlias = 'testDriverOptionsPool';
+    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
     await mgr.init();
-    await mgr.close();
+    return mgr.close();
+  }
 
-    let ferr;
-    try {
-      await Fs.promises.access(tns)
-    } catch (err) {
-      ferr = err;
-    }
-    expect(ferr).to.be.error();
+  static async confConnectionAlternatives() {
+    const conf = getConf(), conn = conf.db.connections[0];
+    conn.host = conf.univ.db.testId.host;
+    conn.port = conf.univ.db.testId.port;
+    conn.protocol = conf.univ.db.testId.protocol;
+    conf.univ.db.testId.host = false;
+    conf.univ.db.testId.port = false;
+    conf.univ.db.testId.protocol = false;
+    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async createBindsIterInvalid() {
+    return rows('create', { numOfIterations: 2 });
   }
 
   static async create() {
     return rows('create');
+  }
+
+  static async readAfterCreateAll() {
+    const rslts = await priv.mgr.db.tst.auxy.all.rows({ type: 'READ' });
+    //expect(rslts, 'read all results').length(priv.rowCount);
   }
 
   static async readAfterCreate() {
@@ -174,6 +214,8 @@ function getConf() {
       "db": {
         "testId": {
           "host": "localhost",
+          "port": 1521,
+          "protocol": "TCP",
           "username": Os.userInfo().username,
           "password": Os.userInfo().username
         }
@@ -212,7 +254,6 @@ async function rows(op, opts, deleted) {
   Labrat.header(`Running ${op}`);
   if (LOGGER.info) LOGGER.info(`Performing "${op}" on ${priv.rowCount} test records`);
 
-  opts = opts || {};
   if (!priv.mgr) {
     const conf = getConf();
     priv.mgr = new Manager(conf, priv.cache, priv.mgrLogit);
@@ -220,17 +261,19 @@ async function rows(op, opts, deleted) {
   }
   
   const proms = new Array(priv.rowCount), date = new Date();
-  for (let i = 0, binds; i < priv.rowCount; i++) {
+  for (let i = 0, eopts; i < priv.rowCount; i++) {
+    eopts = {};
     if (op === 'create') {
-      binds = { id: i + 1, name: `${op} ${i}`, created: date, updated: date };
+      eopts.binds = { id: i + 1, name: `${op} ${i}`, created: date, updated: date };
     } else if (op = 'update') {
-      binds = { id: i + 1, updated: date };
+      eopts.binds = { id: i + 1, updated: date };
     } else if (op === 'delete') {
-      binds = { id: i + 1 };
+      eopts.binds = { id: i + 1 };
     } else if (op === 'read') {
-      binds = { id: i + 1 };
+      eopts.binds = { id: i + 1 };
     }
-    proms[i] = priv.mgr.db.tst[op].table.rows({ binds });
+    if (opts) Object.assign(eopts, opts);
+    proms[i] = priv.mgr.db.tst[op].table.rows(eopts);
   }
 
   const rslts = await Promise.all(proms);
@@ -238,6 +281,44 @@ async function rows(op, opts, deleted) {
   for (let rslt of rslts) {
     if (LOGGER.info) LOGGER.info(`Result for "${op}"`, rslt);
   }
+}
+
+/**
+ * Expects the use of Oracle SIDs to work properly
+ * @param {Manager~ConfigurationOptions} conf One or more configurations to generate
+ * @param {Object} [testOpts] The SID test options
+ * @param {String} [testOpts.sid] An alernative SID to use (defaults to the `service` set on the connection)
+ */
+async function expectSid(conf, testOpts) {
+  for (let conn of conf.db.connections) {
+    conn.driverOptions.sid = (testOpts && testOpts.sid) || conn.service;
+    // don't ping the connection pool since it may have not been setup
+    conn.driverOptions.pingOnInit = false;
+  }
+  // ensure there is a manager logger for testing
+  const mgr = new Manager(conf, priv.cache, priv.mgrLogit || generateTestAbyssLogger);
+  const tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
+
+  await Fs.promises.access(tns, Fs.constants.F_OK);
+  // TODO : check that the TNS records are valid? (await Fs.promises.readFile(tns)).toString()
+  await mgr.init();
+  await mgr.close();
+
+  let ferr;
+  try {
+    await Fs.promises.access(tns)
+  } catch (err) {
+    ferr = err;
+  }
+  expect(ferr).to.be.error();
+}
+
+/**
+ * Generate a test logger that just consumes logging
+ * @param {Sring[]} [tags] The tags that will prefix the log output
+ */
+function generateTestAbyssLogger() {
+  return function testAbyssLogger() {};
 }
 
 // when not ran in a test runner execute static Tester functions (excluding what's passed into Main.run) 

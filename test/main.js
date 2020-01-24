@@ -28,14 +28,23 @@ lab.experiment(plan, () => {
   if (Tester.beforeEach) lab.beforeEach(Tester.beforeEach);
   if (Tester.afterEach) lab.afterEach(Tester.afterEach);
 
-  lab.test(`${plan}: Missing Host (Error)`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'host' }, Tester.confHostMissing));
+  lab.test(`${plan}: Host Missing (Error)`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'host' }, Tester.confHostMissing));
+  lab.test(`${plan}: Service/SID Missing (Error)`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'service or SID' }, Tester.confServiceMissing));
+  lab.test(`${plan}: Credentials Invalid (Error)`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'credentials' }, Tester.confCredentialsInvalid));
 
-  lab.test(`${plan}: Multiple Manager Pools`, { timeout: TEST_TKO }, Tester.multipleManagerPools);
-  lab.test(`${plan}: Prototype Driver Options Global`, { timeout: TEST_TKO }, Tester.protoGlobals);
-  lab.test(`${plan}: Driver Options`, { timeout: TEST_TKO }, Tester.driverOptions);
-  lab.test(`${plan}: SID Options`, { timeout: TEST_TKO }, Tester.managerSid);
+  lab.test(`${plan}: Driver Options Missing`, { timeout: TEST_TKO }, Tester.confDriverOptionsMissing);
+  lab.test(`${plan}: Driver Options Global Non-Own Properties`, { timeout: TEST_TKO }, Tester.confDriverOptionsGlobalNonOwnProps);
+  lab.test(`${plan}: Driver Options Custom Pool/Connection Naming`, { timeout: TEST_TKO }, Tester.confDriverOptionsConnAndPoolNames);
+  lab.test(`${plan}: Driver Options SID`, { timeout: TEST_TKO }, Tester.confDriverOptionsSid);
+  lab.test(`${plan}: Driver Options SID (defaults)`, { timeout: TEST_TKO }, Tester.confDriverOptionsSidDefaults);
+  lab.test(`${plan}: Driver Options SID (multiple)`, { timeout: TEST_TKO }, Tester.confDriverOptionsSidMultiple);
+  lab.test(`${plan}: Driver Options Pool`, { timeout: TEST_TKO }, Tester.confDriverOptionsPool);
+  lab.test(`${plan}: Connection Alternatives`, { timeout: TEST_TKO }, Tester.confConnectionAlternatives);
+
+  lab.test(`${plan}: Execute Binds With Iterations (Error)`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'binds/iterations' }, Tester.createBindsIterInvalid));
 
   lab.test(`${plan}: CREATE`, { timeout: TEST_TKO }, Tester.create);
+  lab.test(`${plan}: READ ALL (after create)`, { timeout: TEST_TKO }, Tester.readAfterCreateAll);
   lab.test(`${plan}: READ (after create)`, { timeout: TEST_TKO }, Tester.readAfterCreate);
   lab.test(`${plan}: UPDATE`, { timeout: TEST_TKO }, Tester.update);
   lab.test(`${plan}: READ (after update)`, { timeout: TEST_TKO }, Tester.readAfterUpdate);
