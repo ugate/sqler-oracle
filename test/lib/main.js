@@ -128,6 +128,10 @@ class Tester {
     return expectSid(getConf());
   }
 
+  static async confDriverOptionsSidWithPing() {
+    return expectSid(getConf(), { pingOnInit: true });
+  }
+
   static async confDriverOptionsSidDefaults() {
     const conf = getConf(), conn = conf.db.connections[0];
     conf.univ.db.testId.port = conn.port = false;
@@ -287,13 +291,15 @@ async function rows(op, opts, deleted) {
  * Expects the use of Oracle SIDs to work properly
  * @param {Manager~ConfigurationOptions} conf One or more configurations to generate
  * @param {Object} [testOpts] The SID test options
- * @param {String} [testOpts.sid] An alernative SID to use (defaults to the `service` set on the connection)
+ * @param {String} [testOpts.sid] An alernative SID to use for `conf.db.connections[].driverOptions.sid`
+ * Defaults to the `service` set on the connection.
+ * @param {Boolean} [testOpts.pingOnInit] An alternative flag for `conf.db.connections[].driverOptions.pingOnInit`
  */
 async function expectSid(conf, testOpts) {
   for (let conn of conf.db.connections) {
     conn.driverOptions.sid = (testOpts && testOpts.sid) || conn.service;
     // don't ping the connection pool since it may have not been setup
-    conn.driverOptions.pingOnInit = false;
+    conn.driverOptions.pingOnInit = (testOpts && testOpts.hasOwnProperty('pingOnInit')) ? testOpts.pingOnInit : false;
   }
   // ensure there is a manager logger for testing
   const mgr = new Manager(conf, priv.cache, priv.mgrLogit || generateTestAbyssLogger);

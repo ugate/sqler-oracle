@@ -13,7 +13,7 @@ exports.lab = lab;
 // TODO : import { expect } from '@hapi/code';
 // TODO : export * as lab from lab;
 
-const TEST_TKO = 10000;
+const TEST_TKO = 3000;
 const plan = `Oracle DB Manager`;
 
 // node test/lib/main.js -NODE_ENV=test
@@ -36,6 +36,7 @@ lab.experiment(plan, () => {
   lab.test(`${plan}: Driver Options Global Non-Own Properties`, { timeout: TEST_TKO }, Tester.confDriverOptionsGlobalNonOwnProps);
   lab.test(`${plan}: Driver Options Custom Pool/Connection Naming`, { timeout: TEST_TKO }, Tester.confDriverOptionsConnAndPoolNames);
   lab.test(`${plan}: Driver Options SID`, { timeout: TEST_TKO }, Tester.confDriverOptionsSid);
+  lab.test(`${plan}: Driver Options SID Ping (Error)`, { timeout: 7000 }, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'SID ping' }, Tester.confDriverOptionsSidWithPing));
   lab.test(`${plan}: Driver Options SID (defaults)`, { timeout: TEST_TKO }, Tester.confDriverOptionsSidDefaults);
   lab.test(`${plan}: Driver Options SID (multiple)`, { timeout: TEST_TKO }, Tester.confDriverOptionsSidMultiple);
   lab.test(`${plan}: Driver Options Pool`, { timeout: TEST_TKO }, Tester.confDriverOptionsPool);
