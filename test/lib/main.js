@@ -101,6 +101,19 @@ class Tester {
     return mgr.close();
   }
 
+  static async confCredentialsInvalidReturnErrors() {
+    const conf = getConf();
+    conf.univ.db.testId.password = 'fakePassowrd';
+    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
+    const errd = await mgr.init(true), label = 'Manager.init() return';
+
+    expect(errd, label).to.be.object();
+    expect(errd.errors, `${label}.errors`).to.be.array();
+    expect(errd.errors[0], `${label}.errors[0]`).to.be.error();
+
+    return mgr.close();
+  }
+
   static async confDriverOptionsGlobalNonOwnProps() {
     const conf = getConf(), conn = conf.db.connections[0];
     conn.driverOptions.pool = false;
@@ -172,6 +185,15 @@ class Tester {
     const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
     await mgr.init();
     return mgr.close();
+  }
+
+  //======================== Executions ========================
+
+  static async createBindsMissing() {
+    return rows('create', null, {
+      binds: { created: new Date() },
+      managerLogger: generateTestAbyssLogger
+    });
   }
 
   static async createBindsIterInvalid() {
@@ -252,22 +274,26 @@ function getConf() {
  * Performs `priv.rowCount` CRUD operation(s) and validates the results
  * @param {String} op The CRUD operation name
  * @param {Manager~ExecOptions} [opts] The `sqler` execution options
- * @param {Boolean} [deleted] Truthy to indicate that no rows should appear in the results
+ * @param {Object} [testOpts] The test options
+ * @param {Object} [testOpts.binds] An alternative binds to pass
+ * @param {Function} [testOpts.managerLogger] An alternative logging function to pass into the {@link Manager} constructor
  */
-async function rows(op, opts, deleted) {
+async function rows(op, opts, testOpts) {
   Labrat.header(`Running ${op}`);
   if (LOGGER.info) LOGGER.info(`Performing "${op}" on ${priv.rowCount} test records`);
 
   if (!priv.mgr) {
     const conf = getConf();
-    priv.mgr = new Manager(conf, priv.cache, priv.mgrLogit);
+    priv.mgr = new Manager(conf, priv.cache, testOpts && testOpts.hasOwnProperty('managerLogger') ? testOpts.managerLogger : priv.mgrLogit);
     await priv.mgr.init();
   }
   
   const proms = new Array(priv.rowCount), date = new Date();
   for (let i = 0, eopts; i < priv.rowCount; i++) {
     eopts = {};
-    if (op === 'create') {
+    if (testOpts && testOpts.binds) {
+      eopts.binds = testOpts.binds;
+    } else if (op === 'create') {
       eopts.binds = { id: i + 1, name: `${op} ${i}`, created: date, updated: date };
     } else if (op = 'update') {
       eopts.binds = { id: i + 1, updated: date };
@@ -276,7 +302,7 @@ async function rows(op, opts, deleted) {
     } else if (op === 'read') {
       eopts.binds = { id: i + 1 };
     }
-    if (opts) Object.assign(eopts, opts);
+    if (eopts && opts) Object.assign(eopts, opts);
     proms[i] = priv.mgr.db.tst[op].table.rows(eopts);
   }
 
@@ -284,6 +310,13 @@ async function rows(op, opts, deleted) {
   await priv.mgr.commit();
   for (let rslt of rslts) {
     if (LOGGER.info) LOGGER.info(`Result for "${op}"`, rslt);
+    if (op === 'read') {
+      // TODO : expect(rslt.rows, `${op} result.rows`).to.be.array();
+      // TODO : expect(rslt.rows, `${op} result.rows.length = priv.rowCount`).to.have.length(priv.rowCount);
+    } else {
+      // TODO : expect(rslt.raw, `${op} result.raw`).to.be.object();
+      // TODO : expect(rslt.raw.rowsAffected, `${op} result.raw.rowsAffected`).to.equal(1);
+    }
   }
 }
 

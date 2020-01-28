@@ -135,8 +135,8 @@ module.exports = class OracleDialect {
       const msg = `${oraPool ? 'Unable to ping connection from' : 'Unable to create'} Oracle connection pool`;
       if (dlt.at.errorLogger) dlt.at.errorLogger(`${msg} ${Util.inspect(err)}`);
       const pconf = Object.assign({}, dlt.at.pool.orcaleConf);
-      err.message = `${err.message}\n${msg} for ${Util.inspect((pconf.password = '***') && pconf)}`;
-      if (dlt.at.connConf.returnErrors) return err;
+      pconf.password = '***'; // mask sensitive data
+      err.message = `${err.message}\n${msg} for ${Util.inspect(pconf)}`;
       throw err;
     }
   }
@@ -153,8 +153,7 @@ module.exports = class OracleDialect {
     const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
     let conn, bndp, rslts, xopts;
     try {
-      if (opts.binds 
-        && opts.numOfIterations > 1) {
+      if (opts.binds && opts.numOfIterations > 1) {
         throw new Error(`Cannot combine options.numOfIterations=${opts.numOfIterations} with bind variables`);
       }
       const hasDrvrOpts = !!opts.driverOptions;
@@ -165,14 +164,16 @@ module.exports = class OracleDialect {
       // becasue binds may be altered for SQL a clone is made
       bndp = {};
       xopts = (hasDrvrOpts && opts.driverOptions.exec) || {};
-      if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.oracledb.OBJECT;
+      //if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.oracledb.OUT_FORMAT_OBJECT;
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
       if (opts.binds) for (let prop in opts.binds) {
-        if (prop || sql.includes(`:${prop}`)) bndp[prop] = opts.binds[prop];
+        if (sql.includes(`:${prop}`)) {
+          bndp[prop] = opts.binds[prop];
+        }
       }
       rslts = opts.numOfIterations > 1 ? await conn.executeMany(sql, opts.numOfIterations, xopts) : await conn.execute(sql, bndp, xopts);
-      conn.close();
-      return rslts.rows;
+      await conn.close();
+      return { rows: rslts.rows, raw: rslts };
     } catch (err) {
       if (conn) {
         try {
@@ -190,7 +191,6 @@ module.exports = class OracleDialect {
       err.sqlOptions = opts;
       err.sqlBindParams = bndp;
       err.sqlResults = rslts;
-      if (dlt.at.connConf.returnErrors) return err;
       throw err;
     }
   }
@@ -225,7 +225,7 @@ module.exports = class OracleDialect {
       if (dlt.at.logger) {
         dlt.at.logger(`Closing Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}"${opts.tx.pending ? `(uncommitted transactions: ${opts.tx.pending})` : ''}`);
       }
-      pool && pool.close();
+      if (pool) await pool.close();
       if (dlt.at.meta.tns) {
         try {
           await Fs.promises.unlink(dlt.at.meta.tns);
@@ -240,7 +240,6 @@ module.exports = class OracleDialect {
       if (dlt.at.errorLogger) {
         dlt.at.errorLogger(`Failed to close Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}"${opts.tx.pending ? `(uncommitted transactions: ${opts.tx.pending})` : ''}`, err);
       }
-      if (dlt.at.connConf.returnErrors) return err;
       throw err;
     }
   }
@@ -288,24 +287,24 @@ module.exports = class OracleDialect {
  */
 async function operation(name, dlt, opts) {
   const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
-  let conn;
+  let conn, error;
   try {
     conn = await pool.getConnection();
     await conn[name]();
-    conn.close();
   } catch (err) {
+    error = err;
+    if (dlt.at.errorLogger) {
+      dlt.at.errorLogger(`Failed to ${name} ${opts.tx.pending} Oracle transaction(s) with options: ${JSON.stringify(opts)}`, error);
+    }
+    throw error;
+  } finally {
     if (conn) {
       try {
-        conn.close();
+        await conn.close();
       } catch (cerr) {
-        err.closeError = cerr;
+        if (error) error.closeError = cerr;
       }
     }
-    if (dlt.at.errorLogger) {
-      dlt.at.errorLogger(`Failed to ${name} ${opts.tx.pending} Oracle transaction(s) with options: ${JSON.stringify(opts)}`, err);
-    }
-    if (dlt.at.connConf.returnErrors) return err;
-    throw err;
   }
   return opts.tx.pending;
 }
