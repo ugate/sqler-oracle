@@ -5,27 +5,37 @@ const Path = require('path');
 const Util = require('util');
 
 /**
- * Oracle specific {@link Manager~ConnectionOptions} from the `sqler` module
- * @typedef {Manager~ConnectionOptions} OracleDialect~ConnectionOptions
- * @property {Object} [driverOptions] The raw configuration to set directly on the `oracledb` module, etc.
+ * Oracle specific extension of the {@link Manager~ConnectionOptions} from the [`sqler`](https://ugate.github.io/sqler/) module.
+ * @typedef {Manager~ConnectionOptions} OracleConnectionOptions
+ * @property {Object} [driverOptions] The `oracledb` module specific options.
  * @property {String} [driverOptions.sid] An alternative to the default `service` option that indicates that a unique Oracle System ID for the DB will be used instead
  * A `tnsnames.ora` file will be created under the `privatePath`. The `TNS_ADMIN` environmental variable will also be set the `privatePath` when using this option.
- * @property {Object} [driverOptions.global] An object that will contain properties set on the global `oracledb` module class
+ * @property {Object} [driverOptions.global] An object that will contain properties set on the global `oracledb` module class.
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module.
+ * For example `driverOptions.global.someProp = '${ORACLEDB_CONSTANT}'` will be interpreted as `oracledb.someProp = oracledb.ORACLEDB_CONSTANT`.
  * @property {Object} [driverOptions.pool] The pool `conf` options that will be passed into `oracledb.createPool({ conf })`.
  * __Using any of the generic `pool.someOption` will override the `conf` options set on `driverOptions.pool`.__
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module.
+ * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpreted as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
  * @property {Boolean} [driverOptions.pingOnInit=true] A truthy flag that indicates if a _ping_ will be performed after the connection pool is created when
  * {@link OracleDialect.init} is called.
  */
 
 /**
- * Oracle specific {@link Manager~tExecOptions} from the `sqler` module
- * @typedef {Manager~ExecOptions} OracleDialect~OracleExecOptions
- * @property {Object} [driverOptions.pool] The pool attribute options passed into `oracledbPool.getConnection()`
- * @property {Object} [driverOptions.exec] The execution options passed into `oracledbConnection.execute()`
+ * Oracle specific extension of the {@link Manager~ExecOptions} from the [`sqler`](https://ugate.github.io/sqler/) module
+ * @typedef {Manager~ExecOptions} OracleExecOptions
+ * @property {Object} [driverOptions] The `oracledb` module specific options.
+ * @property {Object} [driverOptions.pool] The pool attribute options passed into `oracledbPool.getConnection()`.
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module.
+ * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpreted as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
+ * @property {Object} [driverOptions.exec] The execution options passed into `oracledbConnection.execute()`.
+ * __NOTE: `driverOptions.autoCommit` is ignored in favor of the universal `autoCommit` set directly on the {@link Manager~ExecOptions}.__
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module.
+ * For example `driverOptions.exec.someProp = '${ORACLEDB_CONSTANT}'` will be interpreted as `oracledbExecOpts.someProp = oracledb.ORACLEDB_CONSTANT`.
  */
 
 /**
- * Oracle database implementation for [sqler](https://ugate.github.io/sqler/)
+ * Oracle database {@link Dialect} implementation for [`sqler`](https://ugate.github.io/sqler/)
  */
 module.exports = class OracleDialect {
 
@@ -33,7 +43,7 @@ module.exports = class OracleDialect {
    * Constructor
    * @constructs OracleDialect
    * @param {Manager~PrivateOptions} priv the username that will be used to connect to the database
-   * @param {OracleDialect~ConnectionOptions} connConf the individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
+   * @param {OracleConnectionOptions} connConf the individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
    * @param {Object} [track={}] tracking object that will be used to prevent possible file overwrites of the TNS file when multiple {@link OracleDB}s are used
    * @param {function} [errorLogger] the logging function for errors
    * @param {function} [logger] the logging function for non-errors
@@ -41,6 +51,7 @@ module.exports = class OracleDialect {
    */
   constructor(priv, connConf, track = {}, errorLogger, logger, debug) {
     const dlt = internal(this);
+    dlt.at.connections = {};
     dlt.at.state = {
       pending: 0,
       connection: {
@@ -53,13 +64,8 @@ module.exports = class OracleDialect {
     dlt.at.oracledb.Promise = Promise; // tell Oracle to use the built-in promise
 
     const hasDrvrOpts = !!connConf.driverOptions;
-    const odbOpts = hasDrvrOpts && connConf.driverOptions.global;
-    if (odbOpts) {
-      for (let dopt in odbOpts) {
-        if (!odbOpts.hasOwnProperty(dopt)) continue;
-        dlt.at.oracledb[dopt] = odbOpts[dopt];
-      }
-    }
+    const dopts = hasDrvrOpts && connConf.driverOptions.global;
+    if (dopts) setDriverOptions(dlt.at.oracledb, dopts);
     // default autoCommit = true to conform to sqler
     dlt.at.oracledb.autoCommit = true;
     dlt.at.oracledb.connectionClass = dlt.at.oracledb.connectionClass || `SqlerOracleGen${Math.floor(Math.random() * 10000)}`;
@@ -71,7 +77,7 @@ module.exports = class OracleDialect {
     dlt.at.debug = debug;
     dlt.at.pool = {
       conf: poolOpts,
-      orcaleConf: (hasDrvrOpts && connConf.driverOptions.pool) || {}
+      orcaleConf: hasDrvrOpts && connConf.driverOptions.pool ? setDriverOptions({}, connConf.driverOptions.pool, dlt.at.oracledb) : {}
     };
     dlt.at.pingOnInit = hasDrvrOpts && connConf.driverOptions.hasOwnProperty('pingOnInit') ? !!connConf.driverOptions.pingOnInit : true;
     dlt.at.connConf = connConf;
@@ -151,52 +157,47 @@ module.exports = class OracleDialect {
 
   /**
    * Begins a transaction by opening a connection from the pool
+   * @param {String} txId The transaction ID that will be started
    */
-  async beginTransaction() {
+  async beginTransaction(txId) {
     const dlt = internal(this);
-    if (dlt.at.connection) return;
+    if (dlt.at.connections[txId]) return;
     if (dlt.at.logger) {
-      dlt.at.logger(`Beginning transaction on Oracle connection pool "${
-        dlt.at.pool.orcaleConf.poolAlias}"${dlt.at.state.pending ? `(uncommitted transactions: ${dlt.at.state.pending})` : ''}`);
+      dlt.at.logger(`Beginning transaction on Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}"`);
     }
     const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
-    dlt.at.connection = await dlt.this.getConnection(pool/*, opts*/);
+    dlt.at.connections[txId] = await dlt.this.getConnection(pool, { transactionId: txId });
   }
 
   /**
    * Executes a SQL statement
    * @param {String} sql the SQL to execute
-   * @param {OracleDialect~OracleDialectExecOptions} opts The execution options
+   * @param {OracleDExecOptions} opts The execution options
    * @param {String[]} frags the frament keys within the SQL that will be retained
    * @returns {(Object[] | Error)} The result set, if any (or an error when returning errors instead of throwing them)
    */
   async exec(sql, opts, frags) {
     const dlt = internal(this);
     const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
-    let conn, bndp, rslts, xopts;
+    let conn, bndp = {}, rslts, xopts;
     try {
-      if (opts.binds && opts.numOfIterations > 1) {
-        throw new Error(`Cannot combine options.numOfIterations=${opts.numOfIterations} with bind variables`);
-      }
-
       // becasue binds may be altered for SQL a clone is made
-      bndp = {};
-      xopts = (!!opts.driverOptions && opts.driverOptions.exec) || {};
-      xopts.autoCommit = opts.autoCommit;
-
-      //if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.oracledb.OUT_FORMAT_OBJECT;
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
-      if (opts.binds) for (let prop in opts.binds) {
+      for (let prop in opts.binds) {
         if (sql.includes(`:${prop}`)) {
           bndp[prop] = opts.binds[prop];
         }
       }
 
+      xopts = !!opts.driverOptions && opts.driverOptions.exec ? setDriverOptions({}, opts.driverOptions.exec, dlt.at.oracledb) : {};
+      xopts.autoCommit = opts.autoCommit;
+      if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.oracledb.OUT_FORMAT_OBJECT;
+
       conn = await dlt.this.getConnection(pool, opts);
       dlt.at.state.connection.count = pool.connectionsOpen;
       dlt.at.state.connection.inUse = pool.connectionsInUse;
       
-      rslts = opts.numOfIterations > 1 ? await conn.executeMany(sql, opts.numOfIterations, xopts) : await conn.execute(sql, bndp, xopts);
+      rslts = await conn.execute(sql, bndp, xopts);
 
       const rtn = {
         rows: rslts.rows,
@@ -218,7 +219,7 @@ module.exports = class OracleDialect {
           err.closeError = cerr;
         }
       }
-      const msg = ` (BINDS: ${bndp ? JSON.stringify(bndp) : 'N/A'}, FRAGS: ${frags ? Array.isArray(frags) ? frags.join(', ') : frags : 'N/A'})`;
+      const msg = ` (BINDS: ${JSON.stringify(bndp)}, FRAGS: ${frags ? Array.isArray(frags) ? frags.join(', ') : frags : 'N/A'})`;
       if (dlt.at.errorLogger) {
         dlt.at.errorLogger(`Failed to execute the following SQL: ${msg}\n${sql}`, err);
       }
@@ -232,13 +233,16 @@ module.exports = class OracleDialect {
   }
 
   /**
-   * Need an async function to prevent race conditions
+   * Gets the currently open connection or a new connection when no transaction is in progress
    * @protected
+   * @param {Object} pool The connection pool
+   * @param {OracleDExecOptions} [opts] The execution options
    * @returns {Object} The connection (when present)
    */
   async getConnection(pool, opts) {
     const dlt = internal(this);
-    let conn = dlt.at.connection;
+    const txId = opts && opts.transactionId;
+    let conn = txId ? dlt.at.connections[txId] : null;
     if (!conn) {
       const hasDrvrOpts = opts && !!opts.driverOptions;
       const poolAttrs = (hasDrvrOpts && opts.driverOptions.pool) || {};
@@ -257,7 +261,7 @@ module.exports = class OracleDialect {
     try {
       const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
       if (dlt.at.logger) {
-        dlt.at.logger(`Closing Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}"${dlt.at.state.pending ? `(uncommitted transactions: ${dlt.at.state.pending})` : ''}`);
+        dlt.at.logger(`Closing Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
       }
       if (pool) await pool.close();
       if (dlt.at.tns) {
@@ -273,8 +277,7 @@ module.exports = class OracleDialect {
       return dlt.at.state.pending;
     } catch (err) {
       if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Failed to close Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}"${
-          dlt.at.state.pending ? `(uncommitted transactions: ${dlt.at.state.pending})` : ''}`, err);
+        dlt.at.errorLogger(`Failed to close Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`, err);
       }
       throw err;
     }
@@ -319,7 +322,7 @@ function operation(name, dlt, reset, conn, opts) {
       }
       await conn[name]();
       if (reset) {
-        dlt.at.connection = null;
+        if (opts && opts.transactionId) delete dlt.at.connections[opts.transactionId];
         dlt.at.state.pending = 0;
       }
     } catch (err) {
@@ -340,6 +343,43 @@ function operation(name, dlt, reset, conn, opts) {
     }
     return dlt.at.state.pending;
   };
+}
+
+/**
+ * Sets the `driverOptions` on a specified target.
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the target.
+ * For example `dopts.someProp = '${MY_CONSTANT}'` will be interpreted as `target.someProp = target.MY_CONSTANT`
+ * (or `target.someProp = altConstTarget.MY_CONSTANT` when a `altConstTarget` is specified).
+ * @private
+ * @param {Object} target The target where the `driverOptions` will be set.
+ * @param {Object} dopts The `driverOptions` from {@link OracleConnectionOptions} or {@link OracleExecOptions}.
+ * @param {Object} [altConstTarget=target] An alternative target to use for extracting _constants_ from.
+ * @returns {Object} The passed target
+ */
+function setDriverOptions(target, dopts, altConstTarget) {
+  let val, typ, constTrg = altConstTarget || target;
+  for (let dopt in dopts) {
+    if (!dopts.hasOwnProperty(dopt)) continue;
+    typ = typeof dopts[dopt];
+    if (typ === 'object') {
+      setDriverOptions(dopts[dopt], dopts[dopt], altConstTarget);
+      continue;
+    }
+    if (typ === 'string') {
+      // constant target values by name
+      val = undefined;
+      dopts[dopt].replace(/\${([A-Z_]+)}/i, (match, constProp) => {
+        val = constProp in constTrg ? constTrg[constProp] : constProp;
+      });
+      if (typeof val === 'undefined') {
+        val = dopts[dopt];
+      }
+    } else {
+      val = dopts[dopt];
+    }
+    target[dopt] = val;
+  }
+  return target;
 }
 
 // private mapping

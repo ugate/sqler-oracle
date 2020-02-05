@@ -4,9 +4,9 @@
   "description": "@ugate/sqler dialect for Oracle DB",
   "main": "index.js",
   "scripts": {
-    "test": "lab -v -c --coverage-exclude lib -t 86 -e prod",
-    "testing": "lab -v -c --coverage-exclude lib -t 86 -e test",
-    "test-debug": "lab -v -c --coverage-exclude lib -t 86 -e dev",
+    "test": "lab -v -c --coverage-exclude lib -t 85 -e prod",
+    "testing": "lab -v -c --coverage-exclude lib -t 85 -e test",
+    "test-debug": "lab -v -c --coverage-exclude lib -t 85 -e dev",
     "jsdocp": "jsdocp ./jsdocp/jsdoc.json",
     "jsdocp-deploy": "jsdocp -D ./jsdocp/jsdoc.json"
   },
@@ -34,7 +34,7 @@
     "jsdocp": "^1.0.3",
     "minami": "^1.2.3",
     "oracledb": "^4.2.0",
-    "sqler": "^5.1.0"
+    "sqler": "^5.3.0"
   },
   "files": [
     "/index.js",

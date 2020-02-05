@@ -50,7 +50,15 @@ module.exports = class OracleTestDialect extends OracleDialect {
    * @inheritdoc
    */
   async init(opts) {
-    return super.init(opts);
+    const pool = await super.init(opts);
+
+    /*const conn = await pool.getConnection();console.log('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!', conn)
+    await conn.execute(`
+    set isolation serializable
+    `, {}, { autoCommit: true });
+    await conn.commit();*/
+
+    return pool;
   }
 
   /**
@@ -60,6 +68,13 @@ module.exports = class OracleTestDialect extends OracleDialect {
     expect(sql, 'sql').to.be.string();
 
     expect(opts, 'opts').to.be.object();
+
+    const state = super.state;
+    expect(state, 'dialect.state').to.be.object();
+    expect(state.pending, 'dialect.state.pending').to.be.number();
+    expect(state.connection, 'dialect.connection').to.be.object();
+    expect(state.connection.count, 'dialect.connection.count').to.be.number();
+    expect(state.connection.inUse, 'dialect.connection.inUse').to.be.number();
 
     return super.exec(sql, opts, frags);
   }

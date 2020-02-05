@@ -44,7 +44,6 @@ lab.experiment(plan, () => {
   lab.test(`${plan}: Driver Options Pool`, { timeout: TEST_TKO }, Tester.confDriverOptionsPool);
   lab.test(`${plan}: Connection Alternatives`, { timeout: TEST_TKO }, Tester.confConnectionAlternatives);
 
-  lab.test(`${plan}: Execute Binds With Iterations (Error)`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'binds/iterations' }, Tester.createBindsIterInvalid));
   lab.test(`${plan}: Execute Binds Missing (Error)`, { timeout: TEST_LONG_TKO }, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'binds missing' }, Tester.createBindsMissing));
 
   lab.test(`${plan}: CREATE`, { timeout: TEST_TKO }, Tester.create);

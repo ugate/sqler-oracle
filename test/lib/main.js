@@ -118,6 +118,8 @@ class Tester {
     const TestGlobal = class {};
     TestGlobal.prototype.skip = 'Skip adding this global property';
     conn.driverOptions.global = new TestGlobal();
+    conn.driverOptions.global.fakeObject = {};
+    conn.driverOptions.global.fakeConstant = '${FAKE_CONSTANT_NAME}';
     conn.driverOptions.global.autoCommit = false;
     const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
     await mgr.init();
@@ -161,7 +163,8 @@ class Tester {
     const conf = getConf(), conn = conf.db.connections[0];
     conn.driverOptions = conn.driverOptions || {};
     conn.driverOptions.pool = conn.driverOptions.pool || {};
-    conn.driverOptions.pool.poolMin = 5;
+    // test constant pool min from oracledb.poolMin
+    conn.driverOptions.pool.poolMin = '${poolMin}';
     conn.driverOptions.pool.poolMax = 10;
     conn.driverOptions.pool.poolTimeout = 6000;
     conn.driverOptions.pool.poolIncrement = 2;
@@ -189,13 +192,8 @@ class Tester {
 
   static async createBindsMissing() {
     return rows('create', null, {
-      binds: { created: new Date() },
-      managerLogger: generateTestAbyssLogger
+      binds: { created: new Date() }
     });
-  }
-
-  static async createBindsIterInvalid() {
-    return rows('create', { numOfIterations: 2 });
   }
 
   static async create() {
@@ -203,8 +201,15 @@ class Tester {
   }
 
   static async readAfterCreateAll() {
-    const rslts = await priv.mgr.db.tst.auxy.all.rows({ type: 'READ' });
-    //expect(rslts, 'read all results').length(priv.rowCount);
+    return rows('read-all', {
+      type: 'READ',
+      driverOptions: {
+        exec: {
+          // orcaledb constant for array output
+          outFormat: '${OUT_FORMAT_ARRAY}'
+        }
+      }
+    });
   }
 
   static async readAfterCreate() {
@@ -224,7 +229,7 @@ class Tester {
   }
 
   static async readAfterDelete() {
-    return rows('read', null, true);
+    return rows('read', null, { deleted: true });
   }
 }
 
@@ -273,8 +278,8 @@ function getConf() {
  * @param {String} op The CRUD operation name
  * @param {Manager~ExecOptions} [opts] The `sqler` execution options
  * @param {Object} [testOpts] The test options
+ * @param {Boolean} [testOpts.deleted] Truthy if the rows are expected to be deleted
  * @param {Object} [testOpts.binds] An alternative binds to pass
- * @param {Function} [testOpts.managerLogger] An alternative logging function to pass into the {@link Manager} constructor
  */
 async function rows(op, opts, testOpts) {
   Labrat.header(`Running ${op}`);
@@ -295,24 +300,43 @@ async function rows(op, opts, testOpts) {
     await priv.mgr.init();
   }
 
-  if (!autoCommit) await priv.mgr.db.tst.beginTransaction();
+  let txId, txId2, tx2Rslt;
+  if (!autoCommit) {
+    txId = await priv.mgr.db.tst.beginTransaction();
+    // test double execution to ensure the transactions are isolated
+    /*txId2 = await priv.mgr.db.tst.beginTransaction();
+    tx2Rslt = priv.mgr.db.tst.create.table.rows({
+      autoCommit: false,
+      transactionId: txId2,
+      binds: { id: 1, name: `${op} 1 (simultaneous transaction)`, created: new Date(), updated: new Date() }
+    });*/
+  }
   
-  const proms = new Array(priv.rowCount), date = new Date();
-  for (let i = 0, xopts; i < priv.rowCount; i++) {
-    xopts = {};
-    if (testOpts && testOpts.binds) {
-      xopts.binds = testOpts.binds;
-    } else if (op === 'create') {
-      xopts.binds = { id: i + 1, name: `${op} ${i}`, created: date, updated: date };
-    } else if (op === 'update') {
-      xopts.binds = { id: i + 1, updated: date };
-    } else if (op === 'delete') {
-      xopts.binds = { id: i + 1 };
-    } else if (op === 'read') {
-      xopts.binds = { id: i + 1 };
+  let proms, rowCount = 0, colCount = 4;
+  if (op === 'read-all') {
+    rowCount = priv.rowCount;
+    opts.transactionId = txId;
+    proms = [ priv.mgr.db.tst.auxy.all.rows(opts) ];
+  } else {
+    rowCount = 1; // one row at a time
+    proms = new Array(priv.rowCount);
+    const date = new Date();
+    for (let i = 0, xopts; i < priv.rowCount; i++) {
+      xopts = { transactionId: txId };
+      if (testOpts && testOpts.binds) {
+        xopts.binds = testOpts.binds;
+      } else if (op === 'create') {
+        xopts.binds = { id: i + 1, name: `${op} ${i}`, created: date, updated: date };
+      } else if (op === 'update') {
+        xopts.binds = { id: i + 1, updated: date, someFakeBindNotInSql: 'DONT_INCLUDE_ME' };
+      } else if (op === 'delete') {
+        xopts.binds = { id: i + 1 };
+      } else if (op === 'read') {
+        xopts.binds = { id: i + 1 };
+      }
+      if (opts) Object.assign(xopts, opts);
+      proms[i] = priv.mgr.db.tst[op].table.rows(xopts);
     }
-    if (xopts && opts) Object.assign(xopts, opts);
-    proms[i] = priv.mgr.db.tst[op].table.rows(xopts);
   }
 
   const rslts = await Promise.all(proms);
@@ -320,13 +344,27 @@ async function rows(op, opts, testOpts) {
   for (let rslt of rslts) {
     if (LOGGER.info) LOGGER.info(`Result for "${op}"`, rslt);
     expect(rslt, 'CRUD result').to.be.object();
-    if (op === 'read') {
+    if (op === 'read' || op === 'read-all') {
       expect(rslt.rows, `${op} result.rows`).to.be.array();
-      // TODO : expect(rslt.rows, `${op} result.rows.length = priv.rowCount`).to.have.length(priv.rowCount);
+      if (!testOpts || !testOpts.deleted) {
+        expect(rslt.rows, `${op} result.rows.length`).to.have.length(rowCount);
+        for (let row of rslt.rows) {
+          if (opts && opts.driverOptions && opts.driverOptions.exec && opts.driverOptions.exec.outFormat
+              && opts.driverOptions.exec.outFormat === '${OUT_FORMAT_ARRAY}') {
+            expect(row, `${op} result.rows[] (array)`).to.be.array();
+            expect(row, `${op} result.rows[] (array)`).to.be.length(colCount);
+          } else {
+            expect(row, `${op} result.rows[] (object)`).to.be.object();
+            expect(Object.getOwnPropertyNames(row), `${op} result.rows[] (column count)`).to.be.length(colCount);
+          }
+        }
+      }
     } else {
       expect(rslt.raw, `${op} result.raw`).to.be.object();
-      expect(rslt.raw.rowsAffected, `${op} result.raw.rowsAffected`).to.equal(1);
+      // oracle specific checks
+      expect(rslt.raw.rowsAffected, `${op} result.raw.rowsAffected`).to.equal(rowCount);
     }
+
     if (!autoCommit) {
       expect(rslt.commit, 'result.commit').to.be.function();
       expect(rslt.rollback, 'result.rollback').to.be.function();
@@ -340,6 +378,7 @@ async function rows(op, opts, testOpts) {
       expect(rslt.rollback, 'result.rollback').to.be.undefined();
     }
   }
+  if (tx2Rslt) await tx2Rslt.rollback();
 }
 
 /**
