@@ -13,7 +13,7 @@ const { expect } = require('@hapi/code');
 // TODO : import * as Os from 'os';
 // TODO : import { expect } from '@hapi/code';
 
-const priv = { mgr: null, cache: null, rowCount: 100, mgrLogit: !!LOGGER.info };
+const priv = { mgr: null, cache: null, rowCount: 2, mgrLogit: !!LOGGER.info };
 
 // TODO : ESM uncomment the following line...
 // export
@@ -31,7 +31,6 @@ class Tester {
     await priv.mgr.init();
     
     await priv.mgr.db.tst.ora_test.create.tables();
-    await priv.mgr.commit();
     priv.created = true;
   }
 
@@ -53,7 +52,6 @@ class Tester {
     }
     
     await priv.mgr.db.tst.ora_test.delete.tables();
-    await priv.mgr.commit();
     priv.created = false;
   }
 
@@ -120,7 +118,7 @@ class Tester {
     const TestGlobal = class {};
     TestGlobal.prototype.skip = 'Skip adding this global property';
     conn.driverOptions.global = new TestGlobal();
-    conn.driverOptions.global.autocommit = false;
+    conn.driverOptions.global.autoCommit = false;
     const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
     await mgr.init();
     return mgr.close();
@@ -201,7 +199,7 @@ class Tester {
   }
 
   static async create() {
-    return rows('create');
+    return rows('create', { autoCommit: false });
   }
 
   static async readAfterCreateAll() {
@@ -260,7 +258,7 @@ function getConf() {
           "dialect": "oracle",
           "driverOptions": {
             "global": {
-              "autocommit": false
+              "maxRows": 0
             }
           }
         }
@@ -282,40 +280,64 @@ async function rows(op, opts, testOpts) {
   Labrat.header(`Running ${op}`);
   if (LOGGER.info) LOGGER.info(`Performing "${op}" on ${priv.rowCount} test records`);
 
+  // default autoCommit = true
+  const autoCommit = opts && opts.hasOwnProperty('autoCommit') ? opts.autoCommit : true;
+
   if (!priv.mgr) {
     const conf = getConf();
+    // need to ensure the connection class and pool alias are consistent accross row tests
+    conf.driverOptions = conf.driverOptions || {};
+    conf.driverOptions.global = conf.driverOptions.global || {};
+    conf.driverOptions.global.connectionClass = 'TEST_CONN_CLASS';
+    conf.pool = conf.pool || {};
+    conf.pool.alias = 'TEST_POOL_ALIAS';
     priv.mgr = new Manager(conf, priv.cache, testOpts && testOpts.hasOwnProperty('managerLogger') ? testOpts.managerLogger : priv.mgrLogit);
     await priv.mgr.init();
   }
+
+  if (!autoCommit) await priv.mgr.db.tst.beginTransaction();
   
   const proms = new Array(priv.rowCount), date = new Date();
-  for (let i = 0, eopts; i < priv.rowCount; i++) {
-    eopts = {};
+  for (let i = 0, xopts; i < priv.rowCount; i++) {
+    xopts = {};
     if (testOpts && testOpts.binds) {
-      eopts.binds = testOpts.binds;
+      xopts.binds = testOpts.binds;
     } else if (op === 'create') {
-      eopts.binds = { id: i + 1, name: `${op} ${i}`, created: date, updated: date };
-    } else if (op = 'update') {
-      eopts.binds = { id: i + 1, updated: date };
+      xopts.binds = { id: i + 1, name: `${op} ${i}`, created: date, updated: date };
+    } else if (op === 'update') {
+      xopts.binds = { id: i + 1, updated: date };
     } else if (op === 'delete') {
-      eopts.binds = { id: i + 1 };
+      xopts.binds = { id: i + 1 };
     } else if (op === 'read') {
-      eopts.binds = { id: i + 1 };
+      xopts.binds = { id: i + 1 };
     }
-    if (eopts && opts) Object.assign(eopts, opts);
-    proms[i] = priv.mgr.db.tst[op].table.rows(eopts);
+    if (xopts && opts) Object.assign(xopts, opts);
+    proms[i] = priv.mgr.db.tst[op].table.rows(xopts);
   }
 
   const rslts = await Promise.all(proms);
-  await priv.mgr.commit();
+  let committed;
   for (let rslt of rslts) {
     if (LOGGER.info) LOGGER.info(`Result for "${op}"`, rslt);
+    expect(rslt, 'CRUD result').to.be.object();
     if (op === 'read') {
-      // TODO : expect(rslt.rows, `${op} result.rows`).to.be.array();
+      expect(rslt.rows, `${op} result.rows`).to.be.array();
       // TODO : expect(rslt.rows, `${op} result.rows.length = priv.rowCount`).to.have.length(priv.rowCount);
     } else {
-      // TODO : expect(rslt.raw, `${op} result.raw`).to.be.object();
-      // TODO : expect(rslt.raw.rowsAffected, `${op} result.raw.rowsAffected`).to.equal(1);
+      expect(rslt.raw, `${op} result.raw`).to.be.object();
+      expect(rslt.raw.rowsAffected, `${op} result.raw.rowsAffected`).to.equal(1);
+    }
+    if (!autoCommit) {
+      expect(rslt.commit, 'result.commit').to.be.function();
+      expect(rslt.rollback, 'result.rollback').to.be.function();
+
+      if (!committed) {
+        await rslt.commit();
+        committed = true;
+      }
+    } else {
+      expect(rslt.commit, 'result.commit').to.be.undefined();
+      expect(rslt.rollback, 'result.rollback').to.be.undefined();
     }
   }
 }

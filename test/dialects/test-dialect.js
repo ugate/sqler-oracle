@@ -67,35 +67,8 @@ module.exports = class OracleTestDialect extends OracleDialect {
   /**
    * @inheritdoc
    */
-  async commit(opts) {
-    expect(opts, 'opts').to.be.object();
-
-    return super.commit(opts);
-  }
-
-  /**
-   * @inheritdoc
-   */
-  async rollback(opts) {
-    expect(opts, 'opts').to.be.object();
-
-    return super.rollback(opts);
-  }
-
-  /**
-   * @inheritdoc
-   */
-  async close(opts) {
-    expect(opts, 'opts').to.be.object();
-
-    return super.close(opts);
-  }
-
-  /**
-   * @inheritdoc
-   */
-  isAutocommit(opts) {
-    return super.isAutocommit(opts);
+  async close() {
+    return super.close();
   }
 };
 
@@ -105,12 +78,12 @@ module.exports = class OracleTestDialect extends OracleDialect {
  * @param {OracleTestDialect} dlt The test dialect
  */
 function expectDriverOptions(opts, dlt) {
+  expect(dlt.driver, `${dlt.constructor.name} driver`).to.be.object();
   if (!opts.driverOptions) return;
   expect(opts.driverOptions, 'connConf.driverOptions').to.be.object();
   if (!opts.global) return;
   expect(opts.driverOptions.global, 'connConf.driverOptions.global').to.be.object();
-  expect(opts.driverOptions.global.autocommit, 'connConf.driverOptions.global.autocommit = dlt.isAutocommit').to.equal(dlt.isAutocommit());
-  expect(dlt.driver, `${dlt.constructor.name} driver`).to.be.object();
+  //expect(opts.driverOptions.global.autoCommit, 'connConf.driverOptions.global.autoCommit = dlt.isAutocommit').to.equal(dlt.isAutocommit());
   for (let odb in opts.driverOptions.global) {
     expect(opts.driverOptions.global[odb], `connConf.driverOptions.global.${odb} = dlt.driver.${odb}`).to.be.equal(dlt.driver[odb]);
   }
