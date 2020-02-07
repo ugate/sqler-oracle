@@ -2,7 +2,6 @@
 
 const Fs = require('fs');
 const Path = require('path');
-const Util = require('util');
 
 /**
  * Oracle specific extension of the {@link Manager~ConnectionOptions} from the [`sqler`](https://ugate.github.io/sqler/) module.
@@ -11,27 +10,34 @@ const Util = require('util');
  * @property {String} [driverOptions.sid] An alternative to the default `service` option that indicates that a unique Oracle System ID for the DB will be used instead
  * A `tnsnames.ora` file will be created under the `privatePath`. The `TNS_ADMIN` environmental variable will also be set the `privatePath` when using this option.
  * @property {Object} [driverOptions.global] An object that will contain properties set on the global `oracledb` module class.
- * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module.
- * For example `driverOptions.global.someProp = '${ORACLEDB_CONSTANT}'` will be interpreted as `oracledb.someProp = oracledb.ORACLEDB_CONSTANT`.
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
+ * accordingly.
+ * For example `driverOptions.global.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `oracledb.someProp = oracledb.ORACLEDB_CONSTANT`.
  * @property {Object} [driverOptions.pool] The pool `conf` options that will be passed into `oracledb.createPool({ conf })`.
- * __Using any of the generic `pool.someOption` will override the `conf` options set on `driverOptions.pool`.__
- * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module.
- * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpreted as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
+ * __Using any of the generic `pool.someOption` will override the `conf` options in favor of options set on `driverOptions.pool`.__
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
+ * accordingly.
+ * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
  * @property {Boolean} [driverOptions.pingOnInit=true] A truthy flag that indicates if a _ping_ will be performed after the connection pool is created when
  * {@link OracleDialect.init} is called.
  */
 
 /**
- * Oracle specific extension of the {@link Manager~ExecOptions} from the [`sqler`](https://ugate.github.io/sqler/) module
+ * Oracle specific extension of the {@link Manager~ExecOptions} from the [`sqler`](https://ugate.github.io/sqler/) module. When a property of `binds` contains
+ * an object it will be _interpolated_ for property values on the `oracledb` module.
+ * For example, `binds.name = { dir: '${BIND_OUT}', type: '${STRING}', maxSize: 40 }` will be interpolated as
+ * `binds.name = { dir: oracledb.BIND_OUT, type: oracledb.STRING, maxSize: 40 }`.
  * @typedef {Manager~ExecOptions} OracleExecOptions
  * @property {Object} [driverOptions] The `oracledb` module specific options.
  * @property {Object} [driverOptions.pool] The pool attribute options passed into `oracledbPool.getConnection()`.
- * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module.
- * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpreted as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
+ * accordingly.
+ * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
  * @property {Object} [driverOptions.exec] The execution options passed into `oracledbConnection.execute()`.
  * __NOTE: `driverOptions.autoCommit` is ignored in favor of the universal `autoCommit` set directly on the {@link Manager~ExecOptions}.__
- * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module.
- * For example `driverOptions.exec.someProp = '${ORACLEDB_CONSTANT}'` will be interpreted as `oracledbExecOpts.someProp = oracledb.ORACLEDB_CONSTANT`.
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
+ * accordingly.
+ * For example `driverOptions.exec.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `oracledbExecOpts.someProp = oracledb.ORACLEDB_CONSTANT`.
  */
 
 /**
@@ -42,14 +48,14 @@ module.exports = class OracleDialect {
   /**
    * Constructor
    * @constructs OracleDialect
-   * @param {Manager~PrivateOptions} priv the username that will be used to connect to the database
+   * @param {Manager~PrivateOptions} priv The private configuration options
    * @param {OracleConnectionOptions} connConf the individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
-   * @param {Object} [track={}] tracking object that will be used to prevent possible file overwrites of the TNS file when multiple {@link OracleDB}s are used
-   * @param {function} [errorLogger] the logging function for errors
-   * @param {function} [logger] the logging function for non-errors
-   * @param {Boolean} [debug] the flag that indicates when debugging is turned on
+   * @param {Object} [track] tracking object that will be used to prevent possible file overwrites of the TNS file when multiple {@link OracleDB}s are used
+   * @param {Function} [errorLogger] a function that takes one or more arguments and logs the results as an error (similar to `console.error`)
+   * @param {Function} [logger] a function that takes one or more arguments and logs the results (similar to `console.log`)
+   * @param {Boolean} [debug] a flag that indicates the dialect should be run in debug mode (if supported)
    */
-  constructor(priv, connConf, track = {}, errorLogger, logger, debug) {
+  constructor(priv, connConf, track, errorLogger, logger, debug) {
     const dlt = internal(this);
     dlt.at.connections = {};
     dlt.at.state = {
@@ -65,7 +71,7 @@ module.exports = class OracleDialect {
 
     const hasDrvrOpts = !!connConf.driverOptions;
     const dopts = hasDrvrOpts && connConf.driverOptions.global;
-    if (dopts) setDriverOptions(dlt.at.oracledb, dopts);
+    if (dopts) interpolate(dlt.at.oracledb, dopts);
     // default autoCommit = true to conform to sqler
     dlt.at.oracledb.autoCommit = true;
     dlt.at.oracledb.connectionClass = dlt.at.oracledb.connectionClass || `SqlerOracleGen${Math.floor(Math.random() * 10000)}`;
@@ -77,7 +83,7 @@ module.exports = class OracleDialect {
     dlt.at.debug = debug;
     dlt.at.pool = {
       conf: poolOpts,
-      orcaleConf: hasDrvrOpts && connConf.driverOptions.pool ? setDriverOptions({}, connConf.driverOptions.pool, dlt.at.oracledb) : {}
+      orcaleConf: hasDrvrOpts && connConf.driverOptions.pool ? interpolate({}, connConf.driverOptions.pool, dlt.at.oracledb) : {}
     };
     dlt.at.pingOnInit = hasDrvrOpts && connConf.driverOptions.hasOwnProperty('pingOnInit') ? !!connConf.driverOptions.pingOnInit : true;
     dlt.at.connConf = connConf;
@@ -106,12 +112,12 @@ module.exports = class OracleDialect {
       dlt.at.pool.orcaleConf.connectString = `${host}/${connConf.service}:${port}`;
       dlt.at.connectionType = 'Service';
     } else throw new Error(`Missing ${connConf.dialect} "service" or "sid" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
-    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolMin')) dlt.at.pool.orcaleConf.poolMin = poolOpts.min;
-    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolMax')) dlt.at.pool.orcaleConf.poolMax = poolOpts.max;
-    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolTimeout')) dlt.at.pool.orcaleConf.poolTimeout = poolOpts.idle;
-    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolIncrement')) dlt.at.pool.orcaleConf.poolIncrement = poolOpts.increment;
-    if (!dlt.at.pool.orcaleConf.hasOwnProperty('queueTimeout')) dlt.at.pool.orcaleConf.queueTimeout = poolOpts.timeout;
-    if (!dlt.at.pool.orcaleConf.hasOwnProperty('poolAlias')) dlt.at.pool.orcaleConf.poolAlias = poolOpts.alias;
+    dlt.at.pool.orcaleConf.poolMin = poolOpts.min;
+    dlt.at.pool.orcaleConf.poolMax = poolOpts.max;
+    dlt.at.pool.orcaleConf.poolTimeout = poolOpts.idle;
+    dlt.at.pool.orcaleConf.poolIncrement = poolOpts.increment;
+    dlt.at.pool.orcaleConf.queueTimeout = poolOpts.timeout;
+    dlt.at.pool.orcaleConf.poolAlias = poolOpts.alias;
   }
 
   /**
@@ -147,10 +153,10 @@ module.exports = class OracleDialect {
       return oraPool;
     } catch (err) {
       const msg = `${oraPool ? 'Unable to ping connection from' : 'Unable to create'} Oracle connection pool`;
-      if (dlt.at.errorLogger) dlt.at.errorLogger(`${msg} ${Util.inspect(err)}`);
+      if (dlt.at.errorLogger) dlt.at.errorLogger(`${msg} ${JSON.stringify(err, null, ' ')}`);
       const pconf = Object.assign({}, dlt.at.pool.orcaleConf);
       pconf.password = '***'; // mask sensitive data
-      err.message = `${err.message}\n${msg} for ${Util.inspect(pconf)}`;
+      err.message = `${err.message}\n${msg} for ${JSON.stringify(pconf, null, ' ')}`;
       throw err;
     }
   }
@@ -181,15 +187,11 @@ module.exports = class OracleDialect {
     const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
     let conn, bndp = {}, rslts, xopts;
     try {
-      // becasue binds may be altered for SQL a clone is made
+      // interpolate and remove used binds since
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
-      for (let prop in opts.binds) {
-        if (sql.includes(`:${prop}`)) {
-          bndp[prop] = opts.binds[prop];
-        }
-      }
+      bndp = interpolate(bndp, opts.binds, dlt.at.oracledb, props => sql.includes(`:${props[0]}`));
 
-      xopts = !!opts.driverOptions && opts.driverOptions.exec ? setDriverOptions({}, opts.driverOptions.exec, dlt.at.oracledb) : {};
+      xopts = !!opts.driverOptions && opts.driverOptions.exec ? interpolate({}, opts.driverOptions.exec, dlt.at.oracledb) : {};
       xopts.autoCommit = opts.autoCommit;
       if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.oracledb.OUT_FORMAT_OBJECT;
 
@@ -346,40 +348,57 @@ function operation(name, dlt, reset, conn, opts) {
 }
 
 /**
- * Sets the `driverOptions` on a specified target.
- * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the target.
- * For example `dopts.someProp = '${MY_CONSTANT}'` will be interpreted as `target.someProp = target.MY_CONSTANT`
- * (or `target.someProp = altConstTarget.MY_CONSTANT` when a `altConstTarget` is specified).
+ * Interpolates values from a _source_ object to a _destination_ object.
+ * When a value is a string surrounded by `${}`, it will be assumed to be a interpolated property that resides on _another_ property on the `source`
+ * or an interpolated property on the `interpolator`.
+ * For example `source.someProp = '${SOME_VALUE}'` will be interpreted as `dest.someProp = dest.SOME_VALUE` when the `interpolator` is omitted and
+ * `dest.someProp = interpolator.SOME_VALUE` when an `interpolator` is specified.
  * @private
- * @param {Object} target The target where the `driverOptions` will be set.
- * @param {Object} dopts The `driverOptions` from {@link OracleConnectionOptions} or {@link OracleExecOptions}.
- * @param {Object} [altConstTarget=target] An alternative target to use for extracting _constants_ from.
- * @returns {Object} The passed target
+ * @param {Object} dest The destination where the sources will be set (also the interpolated source when `interpolator` is omitted).
+ * @param {Object} source The source of the values to interpolate (e.g. {@link OracleConnectionOptions}, {@link OracleExecOptions}, etc.).
+ * @param {Object} [interpolator=dest] An alternative source to use for extracting interpolated values from.
+ * @param {Function} [validator] A validation `function({String[]} srcPropNames, {*} srcPropValue)` that returns a boolean indicating whether or not
+ * to include the interpolated property/value. The source property names will be each path to the value (e.g. `source.my.path = 123` would equate to 
+ * a invocation to `validator(['my','path'], 123)`).
+ * @param {String[]} [_vpths] Internal recursion use only
+ * @returns {Object} The passed destination
  */
-function setDriverOptions(target, dopts, altConstTarget) {
-  let val, typ, constTrg = altConstTarget || target;
-  for (let dopt in dopts) {
-    if (!dopts.hasOwnProperty(dopt)) continue;
-    typ = typeof dopts[dopt];
-    if (typ === 'object') {
-      setDriverOptions(dopts[dopt], dopts[dopt], altConstTarget);
+function interpolate(dest, source, interpolator, validator, _vpths) {
+  let val, typ, vfunc = typeof validator === 'function' && validator, pole = interpolator || dest;
+  for (let srcProp in source) {
+    if (!source.hasOwnProperty(srcProp)) continue;
+    typ = typeof source[srcProp];
+    if (typ === 'object' && !(source[srcProp] instanceof Date) && !(source[srcProp] instanceof RegExp)) {
+      if (_vpths) _vpths.push(srcProp);
+      else if (vfunc) _vpths = [srcProp];
+      dest[srcProp] = interpolate(source[srcProp], source[srcProp], interpolator, validator, _vpths);
+      if (_vpths) _vpths.shift();
       continue;
     }
     if (typ === 'string') {
-      // constant target values by name
+      // actual interpolation
       val = undefined;
-      dopts[dopt].replace(/\${([A-Z_]+)}/i, (match, constProp) => {
-        val = constProp in constTrg ? constTrg[constProp] : constProp;
+      source[srcProp].replace(/\${\s*([A-Z_]+)\s*}/i, (match, interpolated) => {
+        val = interpolated in pole ? pole[interpolated] : interpolated;
       });
       if (typeof val === 'undefined') {
-        val = dopts[dopt];
+        val = source[srcProp];
       }
     } else {
-      val = dopts[dopt];
+      val = source[srcProp];
     }
-    target[dopt] = val;
+    if (vfunc) {
+      if (_vpths) _vpths.push(srcProp);
+      else _vpths = [srcProp];
+      if (!vfunc(_vpths, val)) {
+        _vpths.pop();
+        continue;
+      }
+    }
+    dest[srcProp] = val;
+    if (_vpths) _vpths.pop();
   }
-  return target;
+  return dest;
 }
 
 // private mapping

@@ -1,5 +1,7 @@
 'use strict';
 
+process.env.UV_THREADPOOL_SIZE = 10;
+
 const Tester = require('./lib/main');
 const { Labrat } = require('@ugate/labrat');
 const { expect } = require('@hapi/code');

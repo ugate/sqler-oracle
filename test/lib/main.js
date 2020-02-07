@@ -109,7 +109,13 @@ class Tester {
     expect(errd.errors, `${label}.errors`).to.be.array();
     expect(errd.errors[0], `${label}.errors[0]`).to.be.error();
 
-    return mgr.close();
+    try {
+      await mgr.close();
+    } catch (err) {
+      if (LOGGER.warn) {
+        LOGGER.warn(`Unable to close connection for invalid credentials (return errors)`, err);
+      }
+    }
   }
 
   static async confDriverOptionsGlobalNonOwnProps() {
@@ -138,22 +144,22 @@ class Tester {
   }
 
   static async confDriverOptionsSid() {
-    return expectSid(getConf());
+    return expectSid(getConf(true));
   }
 
   static async confDriverOptionsSidWithPing() {
-    return expectSid(getConf(), { pingOnInit: true });
+    return expectSid(getConf(true), { pingOnInit: true });
   }
 
   static async confDriverOptionsSidDefaults() {
-    const conf = getConf(), conn = conf.db.connections[0];
+    const conf = getConf(true), conn = conf.db.connections[0];
     conf.univ.db.testId.port = conn.port = false;
     conf.univ.db.testId.protocol = conn.protocol = false;
     return expectSid(conf);
   }
 
   static async confDriverOptionsSidMultiple() {
-    const conf = getConf(), conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
+    const conf = getConf(true), conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
     conn2.name += '2';
     conf.db.connections.push(conn2);
     return expectSid(conf);
@@ -197,7 +203,7 @@ class Tester {
   }
 
   static async create() {
-    return rows('create', { autoCommit: false });
+    return rows('create', { autoCommit: false }, { dualTxWithLob: true });
   }
 
   static async readAfterCreateAll() {
@@ -236,7 +242,12 @@ class Tester {
 // TODO : ESM comment the following line...
 module.exports = Tester;
 
-function getConf() {
+function getConf(noPool) {
+  const pool = noPool ? undefined : {
+    "min": 5,
+    "max": 10,
+    "increment": 2
+  };
   const conf = {
     "mainPath": 'test',
     "univ": {
@@ -261,6 +272,7 @@ function getConf() {
           "dir": "db",
           "service": "XE",
           "dialect": "oracle",
+          "pool": pool,
           "driverOptions": {
             "global": {
               "maxRows": 0
@@ -280,6 +292,7 @@ function getConf() {
  * @param {Object} [testOpts] The test options
  * @param {Boolean} [testOpts.deleted] Truthy if the rows are expected to be deleted
  * @param {Object} [testOpts.binds] An alternative binds to pass
+ * @param {Boolean} [testOpts.dualTxWithLob] Truthy to test inserting/deleting a LOB while the rows are being processed
  */
 async function rows(op, opts, testOpts) {
   Labrat.header(`Running ${op}`);
@@ -300,16 +313,14 @@ async function rows(op, opts, testOpts) {
     await priv.mgr.init();
   }
 
-  let txId, txId2, tx2Rslt;
+  let txId, txIdLob, txRsltLob;
   if (!autoCommit) {
     txId = await priv.mgr.db.tst.beginTransaction();
-    // test double execution to ensure the transactions are isolated
-    /*txId2 = await priv.mgr.db.tst.beginTransaction();
-    tx2Rslt = priv.mgr.db.tst.create.table.rows({
-      autoCommit: false,
-      transactionId: txId2,
-      binds: { id: 1, name: `${op} 1 (simultaneous transaction)`, created: new Date(), updated: new Date() }
-    });*/
+    if (testOpts && testOpts.dualTxWithLob) {
+      // test double execution to ensure the transactions are isolated
+      txIdLob = await priv.mgr.db.tst.beginTransaction();
+      txRsltLob = await insertLob(txIdLob, true);
+    }
   }
   
   let proms, rowCount = 0, colCount = 4;
@@ -326,13 +337,29 @@ async function rows(op, opts, testOpts) {
       if (testOpts && testOpts.binds) {
         xopts.binds = testOpts.binds;
       } else if (op === 'create') {
-        xopts.binds = { id: i + 1, name: `${op} ${i}`, created: date, updated: date };
+        xopts.binds = {
+          id: { val: i + 1, type: '${NUMBER}', dir: '${BIND_IN}' },
+          name: { val: `${op} ${i}`, dir: '${BIND_INOUT}', maxSize: 500 },
+          created: date,
+          updated: date,
+          someFakeBindNotInSql: 'DONT_INCLUDE_ME'
+        };
       } else if (op === 'update') {
-        xopts.binds = { id: i + 1, updated: date, someFakeBindNotInSql: 'DONT_INCLUDE_ME' };
+        xopts.binds = {
+          id: i + 1, name: `${op} ${i}`,
+          updated: date,
+          someFakeBindNotInSql: 'DONT_INCLUDE_ME'
+        };
       } else if (op === 'delete') {
-        xopts.binds = { id: i + 1 };
+        xopts.binds = {
+          id: i + 1,
+          someFakeBindNotInSql: 'DONT_INCLUDE_ME'
+        };
       } else if (op === 'read') {
-        xopts.binds = { id: i + 1 };
+        xopts.binds = {
+          id: i + 1,
+          someFakeBindNotInSql: 'DONT_INCLUDE_ME'
+        };
       }
       if (opts) Object.assign(xopts, opts);
       proms[i] = priv.mgr.db.tst[op].table.rows(xopts);
@@ -378,7 +405,86 @@ async function rows(op, opts, testOpts) {
       expect(rslt.rollback, 'result.rollback').to.be.undefined();
     }
   }
-  if (tx2Rslt) await tx2Rslt.rollback();
+  if (txRsltLob) {
+    // dirty read of LOB
+    // TODO : await readLob(txIdLob);
+    // now that the other transaction completed... rollback
+    await txRsltLob.rollback();
+  }
+}
+
+/**
+ * Inserts a test LOB. __Leaves the connection open- should call `commit` or `rollback`.__
+ * @param {String} txId The transaction ID to use
+ * @param {Boolean} streamFile Truthy to stream the file into the LOB for insertion, falsy to read the file into the insert statement bind.
+ * @returns {Manager~ExecResults} The LOB results
+ */
+async function insertLob(txId, streamFile) {
+  const filePath = Path.join(process.cwd(), 'test/files/fin-report.pdf'), date = new Date();
+  const xopts = {
+    autoCommit: false,
+    transactionId: txId,
+    binds: { id: 1, created: date, updated: date }
+  };
+  if (streamFile) {
+    xopts.binds.report = { type: '${CLOB}', dir: '${BIND_OUT}' };
+  } else {
+    xopts.binds.report = await Fs.promises.readFile(filePath, 'utf8');
+  }
+  const rslt = await priv.mgr.db.tst.create.table2.rows(xopts);
+  if (!streamFile) return rslt;
+  return new Promise((resolve, reject) => {
+    if (!rslt.raw.outBinds || !rslt.raw.outBinds.report || !rslt.raw.outBinds.report[0]) {
+      reject(new Error(`Missing RETURNING INTO statement for LOB streaming inserion?`))
+      return;
+    }
+    const lob = rslt.raw.outBinds.report[0];
+    lob.on('finish', async () => {
+      resolve(rslt);
+    });
+    lob.on('error', async (err) => {
+      try {
+        await rslt.rollback();
+      } finally {
+        reject(err);
+      }
+    });
+    const lobStrm = Fs.createReadStream(filePath);
+    lobStrm.on('error', async (err) => {
+      try {
+        await rslt.rollback();
+      } finally {
+        reject(err);
+      }
+    });
+    // copies the report to the LOB
+    lobStrm.pipe(lob);
+  });
+}
+
+/**
+ * Reads a test LOB.
+ * @param {String} [txId] The transaction in case a dirty read is desired
+ * @returns {Manager~ExecResults} The LOB results
+ */
+async function readLob(txId) {
+  const filePath = Path.join(process.cwd(), 'test/files/fin-report.pdf'), date = new Date();
+  const xopts = {
+    binds: { id: 1, created: date, updated: date }
+  };
+  if (txId) {
+    xopts.autoCommit = false,
+    xopts.transactionId = txId;
+  }
+  const rslt = await priv.mgr.db.tst.read.table2.rows(xopts);
+
+  expect(rslt, 'LOB read result').to.be.object();
+  expect(rslt.rows, 'LOB read result.rows').to.be.array();
+  expect(rslt.rows[0], 'LOB read result.rows[0]').to.be.object();
+  expect(rslt.rows[0].report, 'LOB read result.rows[0]').to.be.object();
+
+  //const report = rslt.rows[0].report;
+  //report.setEncoding('utf8');
 }
 
 /**

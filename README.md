@@ -11,6 +11,6 @@
 
 [Oracle DB](https://oracle.github.io/node-oracledb) dialect for [`sqler`](https://github.com/ugate/sqler).
 
-- [Manual](https://ugate.github.io/sqler-oracle/tutorial-1-manual.html)
+- [Manual &amp; Examples](https://ugate.github.io/sqler-oracle/tutorial-1-manual.html)
 - [API Docs](https://ugate.github.io/sqler-oracle/module.exports.html)
 - [Testing](https://ugate.github.io/sqler-oracle/tutorial-2-testing.html)
