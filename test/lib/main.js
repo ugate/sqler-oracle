@@ -231,12 +231,11 @@ class Tester {
     if (priv.ci) {
       // TODO : CI, keep multiple transactions open at the same time to ensure
       // each transaction is kept isolated
-      let rslt;
       const txId = await priv.mgr.db.tst.beginTransaction();
       const rslt = await insertLob(priv.lobFile, txId);
       await rslt.commit();
 
-      await rows('create', { autoCommit: false });
+      return rows('create', { autoCommit: false });
     } else {
       // keep multiple transactions open at the same time to ensure
       // each transaction is kept isolated
