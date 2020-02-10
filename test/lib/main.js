@@ -518,20 +518,8 @@ async function expectSid(conf, testOpts) {
   }
   // ensure there is a manager logger for testing
   const mgr = new Manager(conf, priv.cache, priv.mgrLogit || generateTestAbyssLogger);
-  //const tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
-
-  //await Fs.promises.access(tns, Fs.constants.F_OK);
-
   await mgr.init();
-  await mgr.close();
-
-  /*let ferr;
-  try {
-    await Fs.promises.access(tns)
-  } catch (err) {
-    ferr = err;
-  }
-  expect(ferr).to.be.error();*/
+  return mgr.close();
 }
 
 /**
