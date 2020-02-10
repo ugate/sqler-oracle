@@ -163,19 +163,7 @@ class Tester {
   }
 
   static async confDriverOptionsSidWithPing() {
-    const tkoMs = 5000; // NOTE: timeout should be less than testing suite timeout
-    let tko, tkoHandle;
-    try {
-      await expectSid(getConf(true), { pingOnInit: true });
-      clearTimeout(tkoHandle);
-    } catch (err) {
-      if (tko) {
-        if (LOGGER.warn) LOGGER.warn(`Failed to ping SID in ${tkoMs} ms`, err);
-      } else throw err;
-    }
-    tkoHandle = setTimeout(() => {
-      tko = true;
-    }, tkoMs);
+    return expectSid(getConf(true), { pingOnInit: true });
   }
 
   static async confDriverOptionsSidDefaults() {
@@ -530,20 +518,20 @@ async function expectSid(conf, testOpts) {
   }
   // ensure there is a manager logger for testing
   const mgr = new Manager(conf, priv.cache, priv.mgrLogit || generateTestAbyssLogger);
-  const tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
+  //const tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
 
-  await Fs.promises.access(tns, Fs.constants.F_OK);
-  // TODO : check that the TNS records are valid? (await Fs.promises.readFile(tns)).toString()
+  //await Fs.promises.access(tns, Fs.constants.F_OK);
+
   await mgr.init();
   await mgr.close();
 
-  let ferr;
+  /*let ferr;
   try {
     await Fs.promises.access(tns)
   } catch (err) {
     ferr = err;
   }
-  expect(ferr).to.be.error();
+  expect(ferr).to.be.error();*/
 }
 
 /**

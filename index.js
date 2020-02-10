@@ -97,16 +97,18 @@ module.exports = class OracleDialect {
     if (hasDrvrOpts && connConf.driverOptions.sid) {
       process.env.TNS_ADMIN = priv.privatePath;
       dlt.at.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
+      //const wopts = { mode: 0o755 };
       const fdta = `${connConf.driverOptions.sid} = (DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol})(HOST = ${host})(PORT = ${port}))` +
         `(CONNECT_DATA = (SERVER = POOLED)(SID = ${connConf.driverOptions.sid})))${require('os').EOL}`;
-      if (typeof track.tnsCnt === 'undefined') {
-        Fs.writeFileSync(dlt.at.tns, fdta);
+      /*if (typeof track.tnsCnt === 'undefined') {
+        Fs.writeFileSync(dlt.at.tns, fdta, wopts);
         track.tnsCnt = 1;
       } else {
-        Fs.appendFileSync(dlt.at.tns, fdta);
+        Fs.appendFileSync(dlt.at.tns, fdta, wopts);
         track.tnsCnt++;
       }
-      dlt.at.pool.orcaleConf.connectString = connConf.driverOptions.sid;
+      dlt.at.pool.orcaleConf.connectString = connConf.driverOptions.sid;*/
+      dlt.at.pool.orcaleConf.connectString = fdta;
       dlt.at.connectionType = 'SID';
     } else if (connConf.service) {
       dlt.at.pool.orcaleConf.connectString = `${host}/${connConf.service}:${port}`;
