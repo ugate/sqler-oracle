@@ -224,9 +224,19 @@ class Tester {
   }
 
   static async create() {
-    // TODO : local test success, but CI fails test when running dual TX
-    const testOpts = { stream: true, multipleTx: !priv.ci };
-    return rows('create', { autoCommit: false }, testOpts);
+    if (!priv.mgr) {
+      await crudManager();
+    }
+
+    // keep multiple transactions open at the same time to ensure
+    // each transaction is kept isolated
+    const txId = await priv.mgr.db.tst.beginTransaction();
+    const prom = insertLob(priv.lobFile, txId);
+
+    await rows('create', { autoCommit: false });
+
+    const rslt = await prom;
+    return rslt.commit();
   }
 
   static async readAfterCreateAll() {
@@ -315,9 +325,6 @@ function getConf(noPool) {
  * @param {Object} [testOpts] The test options
  * @param {Boolean} [testOpts.deleted] Truthy if the rows are expected to be deleted
  * @param {Object} [testOpts.binds] An alternative binds to pass
- * @param {Object} [testOpts.lob] The LOB test to execute (ommit to skip LOB test)
- * @param {Boolean} [testOpts.lob.stream] Truthy to stream LOB (large files), falsy to read in contents all at once (small files)
- * @param {Boolean} [testOpts.lob.multipleTx] Truthy to test inserting/deleting a LOB while the rows are being processed (`opts.autoCommit` must be _false_)
  */
 async function rows(op, opts, testOpts) {
   Labrat.header(`Running ${op}`);
@@ -325,30 +332,14 @@ async function rows(op, opts, testOpts) {
 
   // default autoCommit = true
   const autoCommit = opts && opts.hasOwnProperty('autoCommit') ? opts.autoCommit : true;
-  const isLob = testOpts && testOpts.lob;
-  const multiTx = !autoCommit && isLob && testOpts.multipleTx;
-  const streamLob = true;
 
   if (!priv.mgr) {
-    const conf = getConf();
-    // need to ensure the connection class and pool alias are consistent accross row tests
-    conf.driverOptions = conf.driverOptions || {};
-    conf.driverOptions.global = conf.driverOptions.global || {};
-    conf.driverOptions.global.connectionClass = 'TEST_CONN_CLASS';
-    conf.pool = conf.pool || {};
-    conf.pool.alias = 'TEST_POOL_ALIAS';
-    priv.mgr = new Manager(conf, priv.cache, testOpts && testOpts.hasOwnProperty('managerLogger') ? testOpts.managerLogger : priv.mgrLogit);
-    await priv.mgr.init();
+    await crudManager(testOpts && testOpts.hasOwnProperty('managerLogger') ? testOpts.managerLogger : priv.mgrLogit);
   }
 
-  let txId, txIdLob, txRsltLob;
+  let txId;
   if (!autoCommit) {
     txId = await priv.mgr.db.tst.beginTransaction();
-    if (multiTx) {
-      // test double execution to ensure the transactions are isolated
-      txIdLob = await priv.mgr.db.tst.beginTransaction();
-      txRsltLob = await insertLob(txIdLob, streamLob);
-    }
   }
   
   let proms, rowCount = 0, colCount = 4;
@@ -433,24 +424,17 @@ async function rows(op, opts, testOpts) {
       expect(rslt.rollback, 'result.rollback').to.be.undefined();
     }
   }
-  if (isLob) {
-    if (multiTx) {
-      await txRsltLob.commit();
-    } else {
-      if (!autoCommit) txIdLob = await priv.mgr.db.tst.beginTransaction();
-      txRsltLob = await insertLob(txIdLob, streamLob);
-      if (!autoCommit) await txRsltLob.commit();
-    }
-  }
 }
 
 /**
  * Inserts a test LOB
+ * @param {String} lobFile The LOB file path to insert.
  * @param {String} [txId] The transaction ID to use. __When used, leaves the connection open- should call `commit` or `rollback`.__
- * @param {Boolean} [streamFile] Truthy to stream the file into the LOB for insertion, falsy to read the file into the insert statement bind.
+ * When a transaction ID is provided the LOB file will be streamed into the LOB for insertion (large files).
+ * Otherwise, the LOB file will be read into the insert statement bind (small files).
  * @returns {Manager~ExecResults} The LOB results
  */
-async function insertLob(txId, streamFile) {
+async function insertLob(lobFile, txId) {
   const date = new Date();
   const xopts = {
     binds: { id: 1, created: date, updated: date }
@@ -459,13 +443,13 @@ async function insertLob(txId, streamFile) {
     xopts.autoCommit = false;
     xopts.transactionId = txId;
   }
-  if (streamFile) {
+  if (txId) {
     xopts.binds.report = { type: '${CLOB}', dir: '${BIND_OUT}' };
   } else {
     xopts.binds.report = await Fs.promises.readFile(lobFile, 'utf8');
   }
   const rslt = await priv.mgr.db.tst.create.table2.rows(xopts);
-  if (!streamFile) return rslt;
+  if (!txId) return rslt;
   return new Promise((resolve, reject) => {
     if (!rslt.raw.outBinds || !rslt.raw.outBinds.report || !rslt.raw.outBinds.report[0]) {
       reject(new Error(`Missing RETURNING INTO statement for LOB streaming inserion?`))
@@ -482,7 +466,13 @@ async function insertLob(txId, streamFile) {
         reject(err);
       }
     });
-    const lobStrm = Fs.createReadStream(lobFile, 'utf8');
+    let lobStrm;
+    try {
+      lobStrm = Fs.createReadStream(lobFile, 'utf8');
+    } catch (err) {
+      reject(err);
+      return;
+    }
     lobStrm.on('error', async (err) => {
       try {
         await rslt.rollback();
@@ -538,6 +528,23 @@ async function expectSid(conf, testOpts) {
   const mgr = new Manager(conf, priv.cache, priv.mgrLogit || generateTestAbyssLogger);
   await mgr.init();
   return mgr.close();
+}
+
+/**
+ * Sets/inits the {@link Manager} for CRUD operations
+ * @param {(Boolean | Function)} [managerLogger] The manager logger to pass into the {@link Manager} constructor
+ * @returns {*} The {@link Manager.init} return value
+ */
+async function crudManager(managerLogger) {
+  const conf = getConf();
+  // need to ensure the connection class and pool alias are consistent accross CRUD tests
+  conf.driverOptions = conf.driverOptions || {};
+  conf.driverOptions.global = conf.driverOptions.global || {};
+  conf.driverOptions.global.connectionClass = 'TEST_CONN_CLASS';
+  conf.pool = conf.pool || {};
+  conf.pool.alias = 'TEST_POOL_ALIAS';
+  priv.mgr = new Manager(conf, priv.cache, managerLogger || priv.mgrLogit);
+  return priv.mgr.init();
 }
 
 /**
