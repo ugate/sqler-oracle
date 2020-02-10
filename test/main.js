@@ -48,7 +48,7 @@ lab.experiment(plan, () => {
 
   lab.test(`${plan}: Execute Binds Missing (Error)`, { timeout: TEST_LONG_TKO }, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'binds missing' }, Tester.createBindsMissing));
 
-  lab.test(`${plan}: CREATE`, { timeout: TEST_TKO }, Tester.create);
+  lab.test(`${plan}: CREATE`, { timeout: TEST_LONG_TKO }, Tester.create);
   lab.test(`${plan}: READ ALL (after create)`, { timeout: TEST_TKO }, Tester.readAfterCreateAll);
   lab.test(`${plan}: READ (after create)`, { timeout: TEST_TKO }, Tester.readAfterCreate);
   lab.test(`${plan}: UPDATE`, { timeout: TEST_TKO }, Tester.update);

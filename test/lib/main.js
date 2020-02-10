@@ -13,7 +13,13 @@ const { expect } = require('@hapi/code');
 // TODO : import * as Os from 'os';
 // TODO : import { expect } from '@hapi/code';
 
-const priv = { mgr: null, cache: null, rowCount: 2, mgrLogit: !!LOGGER.info };
+const priv = {
+  mgr: null,
+  cache: null,
+  rowCount: 2,
+  mgrLogit: !!LOGGER.info,
+  lobFile: Path.join(process.cwd(), 'test/files/fin-report.pdf')
+};
 
 // TODO : ESM uncomment the following line...
 // export
@@ -219,7 +225,8 @@ class Tester {
 
   static async create() {
     // TODO : local test success, but CI fails test when running dual TX
-    return rows('create', { autoCommit: false }, { dualTxWithLob: !priv.ci });
+    const testOpts = { stream: true, multipleTx: !priv.ci };
+    return rows('create', { autoCommit: false }, testOpts);
   }
 
   static async readAfterCreateAll() {
@@ -308,7 +315,9 @@ function getConf(noPool) {
  * @param {Object} [testOpts] The test options
  * @param {Boolean} [testOpts.deleted] Truthy if the rows are expected to be deleted
  * @param {Object} [testOpts.binds] An alternative binds to pass
- * @param {Boolean} [testOpts.dualTxWithLob] Truthy to test inserting/deleting a LOB while the rows are being processed
+ * @param {Object} [testOpts.lob] The LOB test to execute (ommit to skip LOB test)
+ * @param {Boolean} [testOpts.lob.stream] Truthy to stream LOB (large files), falsy to read in contents all at once (small files)
+ * @param {Boolean} [testOpts.lob.multipleTx] Truthy to test inserting/deleting a LOB while the rows are being processed (`opts.autoCommit` must be _false_)
  */
 async function rows(op, opts, testOpts) {
   Labrat.header(`Running ${op}`);
@@ -316,7 +325,8 @@ async function rows(op, opts, testOpts) {
 
   // default autoCommit = true
   const autoCommit = opts && opts.hasOwnProperty('autoCommit') ? opts.autoCommit : true;
-  const dualTx = !autoCommit && testOpts && testOpts.dualTxWithLob;
+  const isLob = testOpts && testOpts.lob;
+  const multiTx = !autoCommit && isLob && testOpts.multipleTx;
   const streamLob = true;
 
   if (!priv.mgr) {
@@ -334,7 +344,7 @@ async function rows(op, opts, testOpts) {
   let txId, txIdLob, txRsltLob;
   if (!autoCommit) {
     txId = await priv.mgr.db.tst.beginTransaction();
-    if (dualTx) {
+    if (multiTx) {
       // test double execution to ensure the transactions are isolated
       txIdLob = await priv.mgr.db.tst.beginTransaction();
       txRsltLob = await insertLob(txIdLob, streamLob);
@@ -423,32 +433,36 @@ async function rows(op, opts, testOpts) {
       expect(rslt.rollback, 'result.rollback').to.be.undefined();
     }
   }
-  if (dualTx) {
-    await txRsltLob.commit();
-  } else if (!autoCommit) {
-    txIdLob = await priv.mgr.db.tst.beginTransaction();
-    txRsltLob = await insertLob(txIdLob, streamLob);
-    await txRsltLob.commit();
+  if (isLob) {
+    if (multiTx) {
+      await txRsltLob.commit();
+    } else {
+      if (!autoCommit) txIdLob = await priv.mgr.db.tst.beginTransaction();
+      txRsltLob = await insertLob(txIdLob, streamLob);
+      if (!autoCommit) await txRsltLob.commit();
+    }
   }
 }
 
 /**
- * Inserts a test LOB. __Leaves the connection open- should call `commit` or `rollback`.__
- * @param {String} txId The transaction ID to use
- * @param {Boolean} streamFile Truthy to stream the file into the LOB for insertion, falsy to read the file into the insert statement bind.
+ * Inserts a test LOB
+ * @param {String} [txId] The transaction ID to use. __When used, leaves the connection open- should call `commit` or `rollback`.__
+ * @param {Boolean} [streamFile] Truthy to stream the file into the LOB for insertion, falsy to read the file into the insert statement bind.
  * @returns {Manager~ExecResults} The LOB results
  */
 async function insertLob(txId, streamFile) {
-  const filePath = Path.join(process.cwd(), 'test/files/fin-report.pdf'), date = new Date();
+  const date = new Date();
   const xopts = {
-    autoCommit: false,
-    transactionId: txId,
     binds: { id: 1, created: date, updated: date }
   };
+  if (txId) {
+    xopts.autoCommit = false;
+    xopts.transactionId = txId;
+  }
   if (streamFile) {
     xopts.binds.report = { type: '${CLOB}', dir: '${BIND_OUT}' };
   } else {
-    xopts.binds.report = await Fs.promises.readFile(filePath, 'utf8');
+    xopts.binds.report = await Fs.promises.readFile(lobFile, 'utf8');
   }
   const rslt = await priv.mgr.db.tst.create.table2.rows(xopts);
   if (!streamFile) return rslt;
@@ -468,7 +482,7 @@ async function insertLob(txId, streamFile) {
         reject(err);
       }
     });
-    const lobStrm = Fs.createReadStream(filePath);
+    const lobStrm = Fs.createReadStream(lobFile, 'utf8');
     lobStrm.on('error', async (err) => {
       try {
         await rslt.rollback();
@@ -487,7 +501,7 @@ async function insertLob(txId, streamFile) {
  * @returns {Manager~ExecResults} The LOB results
  */
 async function readLob(txId) {
-  const filePath = Path.join(process.cwd(), 'test/files/fin-report.pdf'), date = new Date();
+  const date = new Date();
   const xopts = {
     binds: { id: 1, created: date, updated: date }
   };
