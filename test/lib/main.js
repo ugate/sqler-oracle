@@ -57,9 +57,7 @@ class Tester {
         await priv.mgr.db.tst.ora_test.delete.tables();
         priv.created = false;
       } catch (err) {
-        const dropError = `Failed to delete tables (CI=${priv.ci})`;
-        if (LOGGER.warn) LOGGER.warn(dropError, err);
-        else console.warn(dropError, err);
+        if (LOGGER.warn) LOGGER.warn(`Failed to delete tables (CI=${priv.ci})`, err);
       }
     } else {
       await priv.mgr.db.tst.ora_test.delete.tables();
@@ -107,9 +105,14 @@ class Tester {
   static async confCredentialsInvalid() {
     const conf = getConf();
     conf.univ.db.testId.password = 'fakePassowrd';
-    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
+    const mgr = new Manager(conf, priv.cache, false);
     await mgr.init();
-    return mgr.close();
+    try {
+      await mgr.close();
+    } catch (err) {
+     // consume since the connection may not be init
+     if (LOGGER.debug) LOGGER.debug(`Failed to close connection for invalid credentials`, err);
+    }
   }
 
   static async confCredentialsInvalidReturnErrors() {
@@ -125,9 +128,8 @@ class Tester {
     try {
       await mgr.close();
     } catch (err) {
-      if (LOGGER.warn) {
-        LOGGER.warn(`Unable to close connection for invalid credentials (return errors)`, err);
-      }
+      // consume since the connection may not be init
+      if (LOGGER.debug) LOGGER.debug(`Failed to close connection for invalid credentials`, err);
     }
   }
 
@@ -161,7 +163,19 @@ class Tester {
   }
 
   static async confDriverOptionsSidWithPing() {
-    return expectSid(getConf(true), { pingOnInit: true });
+    const tkoMs = 5000; // NOTE: timeout should be less than testing suite timeout
+    let tko, tkoHandle;
+    try {
+      await expectSid(getConf(true), { pingOnInit: true });
+      clearTimeout(tkoHandle);
+    } catch (err) {
+      if (tko) {
+        if (LOGGER.warn) LOGGER.warn(`Failed to ping SID in ${tkoMs} ms`, err);
+      } else throw err;
+    }
+    tkoHandle = setTimeout(() => {
+      tko = true;
+    }, tkoMs);
   }
 
   static async confDriverOptionsSidDefaults() {
