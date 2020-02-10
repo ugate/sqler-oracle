@@ -159,22 +159,22 @@ class Tester {
   }
 
   static async confDriverOptionsSid() {
-    return expectSid(getConf(true));
+    return expectSid(getConf());
   }
 
   static async confDriverOptionsSidWithPing() {
-    return expectSid(getConf(true), { pingOnInit: true });
+    return expectSid(getConf(), { pingOnInit: true });
   }
 
   static async confDriverOptionsSidDefaults() {
-    const conf = getConf(true), conn = conf.db.connections[0];
+    const conf = getConf(), conn = conf.db.connections[0];
     conf.univ.db.testId.port = conn.port = false;
     conf.univ.db.testId.protocol = conn.protocol = false;
     return expectSid(conf);
   }
 
   static async confDriverOptionsSidMultiple() {
-    const conf = getConf(true), conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
+    const conf = getConf(), conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
     conn2.name += '2';
     conf.db.connections.push(conn2);
     return expectSid(conf);
@@ -259,9 +259,9 @@ module.exports = Tester;
 
 function getConf(noPool) {
   const pool = noPool ? undefined : {
-    "min": 5,
-    "max": 10,
-    "increment": 2
+    "min": Math.floor((process.env.UV_THREADPOOL_SIZE - 1) / 2) || 2,
+    "max": process.env.UV_THREADPOOL_SIZE - 1,
+    "increment": 1
   };
   const conf = {
     "mainPath": 'test',
