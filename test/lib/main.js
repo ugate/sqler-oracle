@@ -227,26 +227,15 @@ class Tester {
     if (!priv.mgr) {
       await crudManager();
     }
+    // keep multiple transactions open at the same time to ensure
+    // each transaction is kept isolated
+    const txId = await priv.mgr.db.tst.beginTransaction();
+    const prom = insertLob(priv.lobFile, txId);
 
-    if (priv.ci && false) {
-      // TODO : CI, keep multiple transactions open at the same time to ensure
-      // each transaction is kept isolated
-      //const txId = await priv.mgr.db.tst.beginTransaction();
-      //const rslt = await insertLob(priv.lobFile, txId);
-      //await rslt.commit();
+    await rows('create', { autoCommit: false });
 
-      return rows('create', { autoCommit: false });
-    } else {
-      // keep multiple transactions open at the same time to ensure
-      // each transaction is kept isolated
-      const txId = await priv.mgr.db.tst.beginTransaction();
-      const prom = insertLob(priv.lobFile, txId);
-
-      await rows('create', { autoCommit: false });
-
-      const rslt = await prom;
-      return rslt.commit();
-    }
+    const rslt = await prom;
+    return rslt.commit();
   }
 
   static async readAfterCreateAll() {
