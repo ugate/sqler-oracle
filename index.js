@@ -1,14 +1,10 @@
 'use strict';
 
-const Fs = require('fs');
-const Path = require('path');
-
 /**
  * Oracle specific extension of the {@link Manager~ConnectionOptions} from the [`sqler`](https://ugate.github.io/sqler/) module.
  * @typedef {Manager~ConnectionOptions} OracleConnectionOptions
  * @property {Object} [driverOptions] The `oracledb` module specific options.
- * @property {String} [driverOptions.sid] An alternative to the default `service` option that indicates that a unique Oracle System ID for the DB will be used instead
- * A `tnsnames.ora` file will be created under the `privatePath`. The `TNS_ADMIN` environmental variable will also be set the `privatePath` when using this option.
+ * @property {String} [driverOptions.sid] An alternative to the default `service` option that indicates that a unique Oracle System ID for the DB will be used instead.
  * @property {Object} [driverOptions.global] An object that will contain properties set on the global `oracledb` module class.
  * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
  * accordingly.
@@ -49,11 +45,11 @@ module.exports = class OracleDialect {
    * Constructor
    * @constructs OracleDialect
    * @param {Manager~PrivateOptions} priv The private configuration options
-   * @param {OracleConnectionOptions} connConf the individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
-   * @param {Object} [track] tracking object that will be used to prevent possible file overwrites of the TNS file when multiple {@link OracleDB}s are used
-   * @param {Function} [errorLogger] a function that takes one or more arguments and logs the results as an error (similar to `console.error`)
-   * @param {Function} [logger] a function that takes one or more arguments and logs the results (similar to `console.log`)
-   * @param {Boolean} [debug] a flag that indicates the dialect should be run in debug mode (if supported)
+   * @param {OracleConnectionOptions} connConf The individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
+   * @param {Object} track Container for sharing data between {@link OracleDB} instances (if needed).
+   * @param {Function} [errorLogger] A function that takes one or more arguments and logs the results as an error (similar to `console.error`)
+   * @param {Function} [logger] A function that takes one or more arguments and logs the results (similar to `console.log`)
+   * @param {Boolean} [debug] A flag that indicates the dialect should be run in debug mode (if supported)
    */
   constructor(priv, connConf, track, errorLogger, logger, debug) {
     const dlt = internal(this);
@@ -95,21 +91,13 @@ module.exports = class OracleDialect {
     if (!host) throw new Error(`Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
 
     if (hasDrvrOpts && connConf.driverOptions.sid) {
-      process.env.TNS_ADMIN = priv.privatePath;
-      dlt.at.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
-      //const wopts = { mode: 0o755 };
-      const fdta = `${connConf.driverOptions.sid} = (DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol})(HOST = ${host})(PORT = ${port}))` +
-        `(CONNECT_DATA = (SERVER = POOLED)(SID = ${connConf.driverOptions.sid})))${require('os').EOL}`;
-      /*if (typeof track.tnsCnt === 'undefined') {
-        Fs.writeFileSync(dlt.at.tns, fdta, wopts);
-        track.tnsCnt = 1;
-      } else {
-        Fs.appendFileSync(dlt.at.tns, fdta, wopts);
-        track.tnsCnt++;
-      }
-      dlt.at.pool.orcaleConf.connectString = connConf.driverOptions.sid;*/
-      dlt.at.pool.orcaleConf.connectString = fdta;
+      //process.env.TNS_ADMIN = priv.privatePath;
+      //dlt.at.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
+      dlt.at.pool.orcaleConf.connectString = `(DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol})(HOST = ${host})(PORT = ${port}))` +
+      `(CONNECT_DATA = (SERVER = POOLED)(SID = ${connConf.driverOptions.sid})))`;
       dlt.at.connectionType = 'SID';
+      if (track.tnsCnt) track.tnsCnt++;
+      else track.tnsCnt = 1;
     } else if (connConf.service) {
       dlt.at.pool.orcaleConf.connectString = `${host}/${connConf.service}:${port}`;
       dlt.at.connectionType = 'Service';
@@ -268,16 +256,6 @@ module.exports = class OracleDialect {
         dlt.at.logger(`Closing Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
       }
       if (pool) await pool.close();
-      if (dlt.at.tns) {
-        try {
-          await Fs.promises.unlink(dlt.at.tns);
-        } catch (err) {
-          if (dlt.at.errorLogger) {
-            dlt.at.errorLogger(`Failed to remove TNS file at "${dlt.at.tns}" for pool "${dlt.at.pool.orcaleConf.poolAlias}"${
-              dlt.at.state.pending ? `(uncommitted transactions: ${dlt.at.state.pending})` : ''}`, err);
-          }
-        }
-      }
       return dlt.at.state.pending;
     } catch (err) {
       if (dlt.at.errorLogger) {
