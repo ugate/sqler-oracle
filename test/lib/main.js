@@ -18,7 +18,7 @@ const priv = {
   cache: null,
   rowCount: 2,
   mgrLogit: !!LOGGER.info,
-  lobFile: Path.join(process.cwd(), 'test/files/fin-report.pdf')
+  lobFile: Path.join(process.cwd(), 'test/files/audit-report.pdf')
 };
 
 // TODO : ESM uncomment the following line...
@@ -228,7 +228,7 @@ class Tester {
       await crudManager();
     }
 
-    if (priv.ci) {
+    if (priv.ci && false) {
       // TODO : CI, keep multiple transactions open at the same time to ensure
       // each transaction is kept isolated
       //const txId = await priv.mgr.db.tst.beginTransaction();
