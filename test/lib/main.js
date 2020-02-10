@@ -23,7 +23,8 @@ class Tester {
    * Create table(s) used for testing
    */
   static async before() {
-    Labrat.header('Creating test tables');
+    priv.ci = 'CI' in process.env;
+    Labrat.header(`Creating test tables ${priv.ci ? `(CI=${priv.ci})` : ''}`);
     
     const conf = getConf();
     priv.cache = null;
@@ -51,8 +52,20 @@ class Tester {
       await priv.mgr.init();
     }
     
-    await priv.mgr.db.tst.ora_test.delete.tables();
-    priv.created = false;
+    if (priv.ci) { // drop isn't really need in CI env
+      try {
+        await priv.mgr.db.tst.ora_test.delete.tables();
+        priv.created = false;
+      } catch (err) {
+        const dropError = `Failed to delete tables (CI=${priv.ci})`;
+        if (LOGGER.warn) LOGGER.warn(dropError, err);
+        else console.warn(dropError, err);
+      }
+    } else {
+      await priv.mgr.db.tst.ora_test.delete.tables();
+      priv.created = false;
+    }
+
   }
 
   /**
