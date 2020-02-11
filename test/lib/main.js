@@ -251,6 +251,10 @@ class Tester {
   }
 
   static async readAfterCreate() {
+    if (!priv.mgr) {
+      await crudManager();
+    }
+    await readLob();
     return rows('read');
   }
 
@@ -502,11 +506,12 @@ async function readLob(txId) {
 
   expect(rslt, 'LOB read result').to.be.object();
   expect(rslt.rows, 'LOB read result.rows').to.be.array();
-  expect(rslt.rows[0], 'LOB read result.rows[0]').to.be.object();
-  expect(rslt.rows[0].report, 'LOB read result.rows[0]').to.be.object();
 
-  //const report = rslt.rows[0].report;
-  //report.setEncoding('utf8');
+  for (let row of rslt.rows) {
+    expect(row, 'LOB read result.rows[]').to.be.object();
+    expect(row.report, 'LOB read result.rows[]').to.be.object();
+    //row.report.setEncoding('utf8');
+  }
 }
 
 /**

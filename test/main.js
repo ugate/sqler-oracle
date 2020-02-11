@@ -55,6 +55,4 @@ lab.experiment(plan, () => {
   lab.test(`${plan}: READ (after update)`, { timeout: TEST_TKO }, Tester.readAfterUpdate);
   lab.test(`${plan}: DELETE`, { timeout: TEST_TKO }, Tester.delete);
   lab.test(`${plan}: READ (after delete)`, { timeout: TEST_TKO }, Tester.readAfterDelete);
-
-  //lab.test(`${plan}: CREATE LOB`, { timeout: TEST_LONG_TKO }, Tester.createLob);
 });
