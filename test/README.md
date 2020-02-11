@@ -1,0 +1,1 @@
+> See [Testing docs](https://ugate.github.io/sqler-oracle/tutorial-2-testing.html) for setup details for testing `sqler-oracle`

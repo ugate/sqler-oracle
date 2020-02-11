@@ -1,0 +1,3 @@
+UPDATE TEST
+SET UPDATED_AT = :updated
+WHERE ID = :id
