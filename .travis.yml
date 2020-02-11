@@ -1,10 +1,11 @@
 # When a tagged commit is pushed the documentation pages and npm module are published/deployed:
+os: linux
+# linux dist that includes C++ compiler needed for native node modules
+dist: xenial
 # npm version patch -m "%s Release"
 language: node_js
 node_js:
   - "lts/*"
-# linux dist that includes C++ compiler needed for native node modules
-dist: xenial
 # paths required by the oracledb module
 env:
   - ORA_REPO_VER=v1.0.1 ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe ORACLE_SID=XE OCI_LIB_DIR=/u01/app/oracle/product/11.2.0/xe/lib LD_LIBRARY_PATH=/u01/app/oracle/product/11.2.0/xe/lib CI=TRAVIS UV_THREADPOOL_SIZE=10
@@ -25,7 +26,7 @@ script:
 # - printenv
   - "npm test"
 deploy:
-  edge: true
+  #edge: true # avoid dpl v2 missing api_token
   - provider: script
     cleanup: true
     script: npm run jsdocp-deploy
