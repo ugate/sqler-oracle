@@ -3,7 +3,6 @@
 language: node_js
 node_js:
   - "lts/*"
-sudo: required
 # linux dist that includes C++ compiler needed for native node modules
 dist: xenial
 # paths required by the oracledb module
@@ -26,8 +25,9 @@ script:
 # - printenv
   - "npm test"
 deploy:
+  edge: true
   - provider: script
-    skip_cleanup: true
+    cleanup: true
     script: npm run jsdocp-deploy
     on:
       tags: true # only on tagging commit
@@ -35,7 +35,7 @@ deploy:
         - /v(\d+\.)?(\d+\.)?(\*|\d+)$/
   - provider: npm
     email: "ugate.public@gmail.com"
-    api_key: $NPM_TOKEN  # Set in the settings page of your repository, as a secure variable
+    api_token: $NPM_TOKEN  # Set in the settings page of your repository, as a secure variable
     on:
       tags: true # only on tagging commit
       branch:
