@@ -8,13 +8,16 @@ sudo: required
 dist: xenial
 # paths required by the oracledb module
 env:
-  - ORA_REPO_VER=v1.0.0 ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe ORACLE_SID=XE OCI_LIB_DIR=/u01/app/oracle/product/11.2.0/xe/lib LD_LIBRARY_PATH=/u01/app/oracle/product/11.2.0/xe/lib CI=TRAVIS UV_THREADPOOL_SIZE=10
+  - ORA_REPO_VER=v1.0.1 ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe ORACLE_SID=XE OCI_LIB_DIR=/u01/app/oracle/product/11.2.0/xe/lib LD_LIBRARY_PATH=/u01/app/oracle/product/11.2.0/xe/lib CI=TRAVIS UV_THREADPOOL_SIZE=10
 before_install:
   - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/install.sh
   - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/grant.sh
   - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/grant.sql
   - bash ./install.sh
   - bash ./grant.sh
+  - rm -rf install.sh
+  - rm -rf grant.sh
+  - rm -rf grant.sql
 branches:
   only:
     - master
@@ -23,6 +26,13 @@ script:
 # - printenv
   - "npm test"
 deploy:
+  - provider: script
+    skip_cleanup: true
+    script: npm run jsdocp-deploy
+    on:
+      tags: true # only on tagging commit
+      branch:
+        - /v(\d+\.)?(\d+\.)?(\*|\d+)$/
   - provider: npm
     email: "ugate.public@gmail.com"
     api_key: $NPM_TOKEN  # Set in the settings page of your repository, as a secure variable
