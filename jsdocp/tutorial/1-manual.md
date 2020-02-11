@@ -56,11 +56,13 @@ const conf = {
 };
 
 // see subsequent examples for differnt 
-const mgr = await runExample(mgr);
+const { manager, result } = await runExample(mgr);
+
+console.log('Result:', result);
 
 // after we're done using the manager we should close it
 process.on('SIGINT', async function sigintDB() {
-  await mrg.close();
+  await manager.close();
   console.log('Manager has been closed');
 });
 ```
@@ -79,18 +81,19 @@ async function runExample(conf) {
   await mgr.init();
 
   // execute the SQL statement and capture the results
-  const rslts = await mgr.db.fin.read.ap.invoices({
+  const rslt = await mgr.db.fin.read.ap.invoices({
     binds: {
       audit: 'Y',
+      year: 1957
       // binds can also contain oracle-specific binding objects
       // that reference oracledb module properties using ${}
-      year: { val: 1957, dir: '${BIND_INOUT}', type: '${NUMBER}' }
+      // year: { val: 1957, dir: '${BIND_INOUT}', type: '${NUMBER}' }
     }
   });
 
   console.log('Invoices:', rslts.rows);
 
-  return mgr;
+  return { manager: mgr, result: rslt };
 }
 ```
 
@@ -108,7 +111,6 @@ async function runExample(conf) {
 
   // insert CLOB (autCommit = true is the default)
   const rslt = await mgr.db.fin.create.annual.report({
-    transactionId: txId,
     binds: {
       id: 1,
       report: await Fs.promises.readFile('finance-annual-report.pdf'),
@@ -116,6 +118,8 @@ async function runExample(conf) {
       updated: new Date()
     }
   });
+
+  return { manager: mgr, result: rslt };
 }
 ```
 
@@ -157,7 +161,7 @@ async function runExample(conf) {
     lob.on('finish', async () => {
       try {
         await rslt.commit();
-        resolve(rslt);
+        resolve({ manager: mgr, result: rslt });
       } catch (err) {
         reject(err);
       }
@@ -180,5 +184,43 @@ async function runExample(conf) {
     // copies the report to the LOB
     stream.pipe(lob);  
   });
+}
+```
+
+__Reading a LOB and writting to a file:__
+```sql
+-- db/finance/read.annual.report.sql
+SELECT ID AS "id", REPORT AS "report", CREATED_AT AS "createdAt", UPDATED_AT AS "updatedAt"
+FROM FIN_ANNUAL_REPORT
+```
+```js
+async function runExample(conf) {
+  const mgr = new Manager(conf);
+  // initialize connections and set SQL functions
+  await mgr.init();
+
+  // read CLOBs
+  const rslt = await mgr.db.fin.read.annual.report();
+
+  // write each CLOB to a file
+  const writeLobFile = row => {
+    row.report.setEncoding('utf8');
+    return new Promise((resolve, reject) => {
+      const outStrm = Fs.createWriteStream(`finance-annual-report-${row.id}.pdf`);
+      row.report.on('error', err => reject(err));
+      row.report.on('end', () => resolve());
+      row.report.pipe(outStrm);
+    });
+  };
+  if (rslt.rows.length) {
+    const proms = new Array(rslt.rows.length);
+    let ri = -1;
+    for (let row of rslt.rows) {
+      proms[++ri] = writeLobFile(row);
+    }
+    await Promise.all(proms);
+  }
+
+  return { manager: mgr, result: rslt };
 }
 ```
