@@ -170,7 +170,7 @@ module.exports = class OracleDialect {
    * @param {String} sql the SQL to execute
    * @param {OracleDExecOptions} opts The execution options
    * @param {String[]} frags the frament keys within the SQL that will be retained
-   * @returns {(Object[] | Error)} The result set, if any (or an error when returning errors instead of throwing them)
+   * @returns {Dialect~ExecResults} The execution results
    */
   async exec(sql, opts, frags) {
     const dlt = internal(this);
