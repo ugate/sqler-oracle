@@ -46,13 +46,14 @@ module.exports = class OracleDialect {
    * @constructs OracleDialect
    * @param {Manager~PrivateOptions} priv The private configuration options
    * @param {OracleConnectionOptions} connConf The individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
-   * @param {Object} track Container for sharing data between {@link OracleDB} instances (if needed).
+   * @param {manager~Track} track Container for sharing data between {@link Dialect} instances.
    * @param {Function} [errorLogger] A function that takes one or more arguments and logs the results as an error (similar to `console.error`)
    * @param {Function} [logger] A function that takes one or more arguments and logs the results (similar to `console.log`)
    * @param {Boolean} [debug] A flag that indicates the dialect should be run in debug mode (if supported)
    */
   constructor(priv, connConf, track, errorLogger, logger, debug) {
     const dlt = internal(this);
+    dlt.at.track = track;
     dlt.at.connections = {};
     dlt.at.state = {
       pending: 0,
@@ -67,7 +68,7 @@ module.exports = class OracleDialect {
 
     const hasDrvrOpts = !!connConf.driverOptions;
     const dopts = hasDrvrOpts && connConf.driverOptions.global;
-    if (dopts) interpolate(dlt.at.oracledb, dopts);
+    if (dopts) dlt.at.track.interpolate(dlt.at.oracledb, dopts);
     // default autoCommit = true to conform to sqler
     dlt.at.oracledb.autoCommit = true;
     dlt.at.oracledb.connectionClass = dlt.at.oracledb.connectionClass || `SqlerOracleGen${Math.floor(Math.random() * 10000)}`;
@@ -79,7 +80,7 @@ module.exports = class OracleDialect {
     dlt.at.debug = debug;
     dlt.at.pool = {
       conf: poolOpts,
-      orcaleConf: hasDrvrOpts && connConf.driverOptions.pool ? interpolate({}, connConf.driverOptions.pool, dlt.at.oracledb) : {}
+      orcaleConf: hasDrvrOpts && connConf.driverOptions.pool ? dlt.at.track.interpolate({}, connConf.driverOptions.pool, dlt.at.oracledb) : {}
     };
     dlt.at.pingOnInit = hasDrvrOpts && connConf.driverOptions.hasOwnProperty('pingOnInit') ? !!connConf.driverOptions.pingOnInit : true;
     dlt.at.connConf = connConf;
@@ -179,9 +180,9 @@ module.exports = class OracleDialect {
     try {
       // interpolate and remove used binds since
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
-      bndp = interpolate(bndp, opts.binds, dlt.at.oracledb, props => sql.includes(`:${props[0]}`));
+      bndp = dlt.at.track.interpolate(bndp, opts.binds, dlt.at.oracledb, props => sql.includes(`:${props[0]}`));
 
-      xopts = !!opts.driverOptions && opts.driverOptions.exec ? interpolate({}, opts.driverOptions.exec, dlt.at.oracledb) : {};
+      xopts = !!opts.driverOptions && opts.driverOptions.exec ? dlt.at.track.interpolate({}, opts.driverOptions.exec, dlt.at.oracledb) : {};
       xopts.autoCommit = opts.autoCommit;
       if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.oracledb.OUT_FORMAT_OBJECT;
 
@@ -325,60 +326,6 @@ function operation(name, dlt, reset, conn, opts) {
     }
     return dlt.at.state.pending;
   };
-}
-
-/**
- * Interpolates values from a _source_ object to a _destination_ object.
- * When a value is a string surrounded by `${}`, it will be assumed to be a interpolated property that resides on _another_ property on the `source`
- * or an interpolated property on the `interpolator`.
- * For example `source.someProp = '${SOME_VALUE}'` will be interpreted as `dest.someProp = dest.SOME_VALUE` when the `interpolator` is omitted and
- * `dest.someProp = interpolator.SOME_VALUE` when an `interpolator` is specified.
- * @private
- * @param {Object} dest The destination where the sources will be set (also the interpolated source when `interpolator` is omitted).
- * @param {Object} source The source of the values to interpolate (e.g. {@link OracleConnectionOptions}, {@link OracleExecOptions}, etc.).
- * @param {Object} [interpolator=dest] An alternative source to use for extracting interpolated values from.
- * @param {Function} [validator] A validation `function({String[]} srcPropNames, {*} srcPropValue)` that returns a boolean indicating whether or not
- * to include the interpolated property/value. The source property names will be each path to the value (e.g. `source.my.path = 123` would equate to 
- * a invocation to `validator(['my','path'], 123)`).
- * @param {String[]} [_vpths] Internal recursion use only
- * @returns {Object} The passed destination
- */
-function interpolate(dest, source, interpolator, validator, _vpths) {
-  let val, typ, vfunc = typeof validator === 'function' && validator, pole = interpolator || dest;
-  for (let srcProp in source) {
-    if (!source.hasOwnProperty(srcProp)) continue;
-    typ = typeof source[srcProp];
-    if (typ === 'object' && !(source[srcProp] instanceof Date) && !(source[srcProp] instanceof RegExp)) {
-      if (_vpths) _vpths.push(srcProp);
-      else if (vfunc) _vpths = [srcProp];
-      dest[srcProp] = interpolate(source[srcProp], source[srcProp], interpolator, validator, _vpths);
-      if (_vpths) _vpths.shift();
-      continue;
-    }
-    if (typ === 'string') {
-      // actual interpolation
-      val = undefined;
-      source[srcProp].replace(/\${\s*([A-Z_]+)\s*}/i, (match, interpolated) => {
-        val = interpolated in pole ? pole[interpolated] : interpolated;
-      });
-      if (typeof val === 'undefined') {
-        val = source[srcProp];
-      }
-    } else {
-      val = source[srcProp];
-    }
-    if (vfunc) {
-      if (_vpths) _vpths.push(srcProp);
-      else _vpths = [srcProp];
-      if (!vfunc(_vpths, val)) {
-        _vpths.pop();
-        continue;
-      }
-    }
-    dest[srcProp] = val;
-    if (_vpths) _vpths.pop();
-  }
-  return dest;
 }
 
 // private mapping

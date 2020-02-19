@@ -4,7 +4,7 @@
 
 | 〽️<u>Required Module</u> | ✔️<u>Compatible Version</u> |
 | :---         |     :---:      |
-| [`sqler`](https://ugate.github.io/sqler/) | __`>= 5.3.0`__ |
+| [`sqler`](https://ugate.github.io/sqler/) | __`>= 5.4.0`__ |
 | [`oracledb`](https://oracle.github.io/node-oracledb/) | __`>= 4.0.0`__ |
 
 Install the required modules:
