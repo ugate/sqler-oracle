@@ -1,6 +1,6 @@
 {
   "name": "sqler-oracle",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "@ugate/sqler dialect for Oracle DB",
   "main": "index.js",
   "scripts": {
