@@ -46,7 +46,7 @@ module.exports = class OracleDialect {
    * @constructs OracleDialect
    * @param {Manager~PrivateOptions} priv The private configuration options
    * @param {OracleConnectionOptions} connConf The individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
-   * @param {manager~Track} track Container for sharing data between {@link Dialect} instances.
+   * @param {Manager~Track} track Container for sharing data between {@link Dialect} instances.
    * @param {Function} [errorLogger] A function that takes one or more arguments and logs the results as an error (similar to `console.error`)
    * @param {Function} [logger] A function that takes one or more arguments and logs the results (similar to `console.log`)
    * @param {Boolean} [debug] A flag that indicates the dialect should be run in debug mode (if supported)
@@ -89,7 +89,7 @@ module.exports = class OracleDialect {
     dlt.at.pool.orcaleConf.password = priv.password;
 
     const host = connConf.host || priv.host, port = connConf.port || priv.port || 1521, protocol = connConf.protocol || priv.protocol || 'TCP';
-    if (!host) throw new Error(`Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
+    if (!host) throw new Error(`Oracle: Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
 
     if (hasDrvrOpts && connConf.driverOptions.sid) {
       //process.env.TNS_ADMIN = priv.privatePath;
@@ -102,7 +102,7 @@ module.exports = class OracleDialect {
     } else if (connConf.service) {
       dlt.at.pool.orcaleConf.connectString = `${host}/${connConf.service}:${port}`;
       dlt.at.connectionType = 'Service';
-    } else throw new Error(`Missing ${connConf.dialect} "service" or "sid" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
+    } else throw new Error(`Oracle: Missing ${connConf.dialect} "service" or "sid" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
     dlt.at.pool.orcaleConf.poolMin = poolOpts.min;
     dlt.at.pool.orcaleConf.poolMax = poolOpts.max;
     dlt.at.pool.orcaleConf.poolTimeout = poolOpts.idle;
@@ -114,7 +114,7 @@ module.exports = class OracleDialect {
   /**
    * Initializes {@link OracleDialect} by creating the connection pool
    * @param {Dialect~DialectInitOptions} opts The options described by the `sqler` module
-   * @returns {Object} the Oracle connection pool (or an error when returning errors instead of throwing them)
+   * @returns {Object} The Oracle connection pool
    */
   async init(opts) {
     const dlt = internal(this), numSql = opts.numOfPreparedStmts;
@@ -124,7 +124,7 @@ module.exports = class OracleDialect {
     try {
       oraPool = await dlt.at.oracledb.createPool(dlt.at.pool.orcaleConf);
       if (dlt.at.logger) {
-        dlt.at.logger(`Oracle ${dlt.at.connectionType} connection pool "${oraPool.poolAlias}" created with poolPingInterval=${oraPool.poolPingInterval} ` +
+        dlt.at.logger(`Oracle: ${dlt.at.connectionType} connection pool "${oraPool.poolAlias}" created with poolPingInterval=${oraPool.poolPingInterval} ` +
           `stmtCacheSize=${oraPool.stmtCacheSize} (${numSql} SQL files) poolTimeout=${oraPool.poolTimeout} poolIncrement=${oraPool.poolIncrement} ` +
           `poolMin=${oraPool.poolMin} poolMax=${oraPool.poolMax}`);
       }
@@ -143,7 +143,7 @@ module.exports = class OracleDialect {
       }
       return oraPool;
     } catch (err) {
-      const msg = `${oraPool ? 'Unable to ping connection from' : 'Unable to create'} Oracle connection pool`;
+      const msg = `Oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`;
       if (dlt.at.errorLogger) dlt.at.errorLogger(`${msg} ${JSON.stringify(err, null, ' ')}`);
       const pconf = Object.assign({}, dlt.at.pool.orcaleConf);
       pconf.password = '***'; // mask sensitive data
@@ -160,7 +160,7 @@ module.exports = class OracleDialect {
     const dlt = internal(this);
     if (dlt.at.connections[txId]) return;
     if (dlt.at.logger) {
-      dlt.at.logger(`Beginning transaction on Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}"`);
+      dlt.at.logger(`Oracle: Beginning transaction on connection pool "${dlt.at.pool.orcaleConf.poolAlias}"`);
     }
     const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
     dlt.at.connections[txId] = await dlt.this.getConnection(pool, { transactionId: txId });
@@ -169,7 +169,7 @@ module.exports = class OracleDialect {
   /**
    * Executes a SQL statement
    * @param {String} sql the SQL to execute
-   * @param {OracleDExecOptions} opts The execution options
+   * @param {OracleExecOptions} opts The execution options
    * @param {String[]} frags the frament keys within the SQL that will be retained
    * @returns {Dialect~ExecResults} The execution results
    */
@@ -178,7 +178,7 @@ module.exports = class OracleDialect {
     const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
     let conn, bndp = {}, rslts, xopts;
     try {
-      // interpolate and remove used binds since
+      // interpolate and remove unused binds since
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
       bndp = dlt.at.track.interpolate(bndp, opts.binds, dlt.at.oracledb, props => sql.includes(`:${props[0]}`));
 
@@ -197,11 +197,11 @@ module.exports = class OracleDialect {
         raw: rslts
       };
       if (opts.autoCommit) {
-        await conn.close();
+        await operation(dlt, 'close', true, conn, opts)();
       } else {
         dlt.at.state.pending++;
-        rtn.commit = operation('commit', dlt, true, conn, opts);
-        rtn.rollback = operation('rollback', dlt, true, conn, opts);
+        rtn.commit = operation(dlt, 'commit', true, conn, opts);
+        rtn.rollback = operation(dlt, 'rollback', true, conn, opts);
       }
       return rtn;
     } catch (err) {
@@ -214,7 +214,7 @@ module.exports = class OracleDialect {
       }
       const msg = ` (BINDS: ${JSON.stringify(bndp)}, FRAGS: ${frags ? Array.isArray(frags) ? frags.join(', ') : frags : 'N/A'})`;
       if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Failed to execute the following SQL: ${msg}\n${sql}`, err);
+        dlt.at.errorLogger(`Oracle: Failed to execute the following SQL: ${msg}\n${sql}`, err);
       }
       err.message += msg;
       err.sql = sql;
@@ -229,7 +229,7 @@ module.exports = class OracleDialect {
    * Gets the currently open connection or a new connection when no transaction is in progress
    * @protected
    * @param {Object} pool The connection pool
-   * @param {OracleDExecOptions} [opts] The execution options
+   * @param {OracleExecOptions} [opts] The execution options
    * @returns {Object} The connection (when present)
    */
   async getConnection(pool, opts) {
@@ -254,13 +254,16 @@ module.exports = class OracleDialect {
     try {
       const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
       if (dlt.at.logger) {
-        dlt.at.logger(`Closing Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
+        dlt.at.logger(`Oracle: Closing connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
       }
       if (pool) await pool.close();
+      dlt.at.connections = {};
+      dlt.at.state.connection.count = 0;
+      dlt.at.state.connection.inUse = 0;
       return dlt.at.state.pending;
     } catch (err) {
       if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Failed to close Oracle connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`, err);
+        dlt.at.errorLogger(`Oracle: Failed to close connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`, err);
       }
       throw err;
     }
@@ -285,14 +288,14 @@ module.exports = class OracleDialect {
 /**
  * Executes a function by name that resides on the Oracle connection
  * @private
- * @param {String} name The name of the function that will be called on the connection
  * @param {Object} dlt The internal Oracle object instance
+ * @param {String} name The name of the function that will be called on the connection
  * @param {Boolean} [reset] Truthy to reset the pending connection and transaction count when the operation completes successfully
  * @param {Object} [conn] The connection (ommit to get a connection from the pool)
  * @param {Manager~ExecOptions} [opts] The {@link Manager~ExecOptions}
  * @returns {Function} A no-arguement `async` function that returns the number or pending transactions
  */
-function operation(name, dlt, reset, conn, opts) {
+function operation(dlt, name, reset, conn, opts) {
   return async () => {
     let error;
     try {
@@ -303,7 +306,10 @@ function operation(name, dlt, reset, conn, opts) {
         poolAttrs.poolAlias = dlt.at.pool.orcaleConf.poolAlias;
         conn = await pool.getConnection(poolAttrs);
       }
-      await conn[name]();
+      if (conn && dlt.at.logger) {
+        dlt.at.logger(`Oracle: Performing ${name} on connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
+      }
+      if (conn) await conn[name]();
       if (reset) {
         if (opts && opts.transactionId) delete dlt.at.connections[opts.transactionId];
         dlt.at.state.pending = 0;
@@ -311,12 +317,12 @@ function operation(name, dlt, reset, conn, opts) {
     } catch (err) {
       error = err;
       if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Failed to ${name} ${dlt.at.state.pending} Oracle transaction(s) with options: ${
+        dlt.at.errorLogger(`Oracle: Failed to ${name} ${dlt.at.state.pending} transaction(s) with options: ${
           opts ? JSON.stringify(opts) : 'N/A'}`, error);
       }
       throw error;
     } finally {
-      if (conn) {
+      if (conn && name !== 'close') {
         try {
           await conn.close();
         } catch (cerr) {
