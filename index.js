@@ -217,10 +217,12 @@ module.exports = class OracleDialect {
         dlt.at.errorLogger(`Oracle: Failed to execute the following SQL: ${msg}\n${sql}`, err);
       }
       err.message += msg;
-      err.sql = sql;
-      err.sqlOptions = opts;
-      err.sqlBinds = bndp;
-      err.sqlResults = rslts;
+      err.sqlerOracle = {
+        sql,
+        options: opts,
+        binds: bndp,
+        results: rslts
+      };
       throw err;
     }
   }
@@ -326,7 +328,11 @@ function operation(dlt, name, reset, conn, opts) {
         try {
           await conn.close();
         } catch (cerr) {
-          if (error) error.closeError = cerr;
+          if (error) {
+            error.sqlOracle = {
+              closeError: cerr
+            };
+          }
         }
       }
     }

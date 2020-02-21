@@ -3,6 +3,7 @@
   "version": "1.1.1",
   "description": "@ugate/sqler dialect for Oracle DB",
   "main": "index.js",
+  "engines" : { "node" : ">=12" },
   "scripts": {
     "test": "lab -v -c --coverage-exclude lib -t 85 -e prod",
     "testing": "lab -v -c --coverage-exclude lib -t 85 -e test",
