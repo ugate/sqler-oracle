@@ -10,7 +10,7 @@
  * accordingly.
  * For example `driverOptions.global.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `oracledb.someProp = oracledb.ORACLEDB_CONSTANT`.
  * @property {Object} [driverOptions.pool] The pool `conf` options that will be passed into `oracledb.createPool({ conf })`.
- * __Using any of the generic `pool.someOption` will override the `conf` options in favor of options set on `driverOptions.pool`.__
+ * __Using any of the generic `pool.someOption` will override the `conf` options set on `driverOptions.pool`.__
  * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
  * accordingly.
  * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
