@@ -55,8 +55,8 @@ const conf = {
   }
 };
 
-// see subsequent examples for differnt 
-const { manager, result } = await runExample(mgr);
+// see subsequent examples for different examples
+const { manager, result } = await runExample(conf);
 
 console.log('Result:', result);
 
