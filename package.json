@@ -31,13 +31,13 @@
   "homepage": "https://github.com/ugate/sqler-oracle#readme",
   "devDependencies": {
     "@hapi/code": "^8.0.1",
-    "@hapi/lab": "^22.0.3",
+    "@hapi/lab": "^22.0.4",
     "@ugate/labrat": "^2.1.0",
     "jsdoc": "^3.6.3",
     "jsdocp": "^1.0.3",
     "minami": "^1.2.3",
     "oracledb": "^4.2.0",
-    "sqler": "^5.4.0"
+    "sqler": "^5.6.2"
   },
   "files": [
     "/index.js",
