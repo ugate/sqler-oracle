@@ -28,13 +28,14 @@ script:
 deploy:
   #edge: true # avoid dpl v2 missing api_token
   - provider: script
-    cleanup: true
+    cleanup: false
     script: npm run jsdocp-deploy
     on:
       tags: true # only on tagging commit
       branch:
         - /v(\d+\.)?(\d+\.)?(\*|\d+)$/
   - provider: npm
+    cleanup: true
     email: "ugate.public@gmail.com"
     api_token: $NPM_TOKEN  # Set in the settings page of your repository, as a secure variable
     on:
