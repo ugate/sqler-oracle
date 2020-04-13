@@ -2,10 +2,9 @@
 
 > __Most of documentation pertaining to general configuration for `sqler-oracle` can be found in the [`sqler` manual](https://ugate.github.io/sqler).__
 
-| 〽️<u>Required Module</u> | ✔️<u>Compatible Version</u> |
-| :---         |     :---:      |
-| [`sqler`](https://ugate.github.io/sqler/) | __`>= 5.4.0`__ |
-| [`oracledb`](https://oracle.github.io/node-oracledb/) | __`>= 4.0.0`__ |
+The following modules versions are required when using `sqler-oracle`:
+```jsdocp ./package.json @~ devDependencies.sqler @~ devDependencies.oracledb
+```
 
 Install the required modules:
 ```sh
