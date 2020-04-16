@@ -28,6 +28,7 @@ script:
 deploy:
   #edge: true # avoid dpl v2 missing api_token
   - provider: script
+    skip_cleanup: true # deprecated, use cleanup with new dpl ver
     cleanup: false
     script: npm run jsdocp-deploy
     on:
@@ -35,6 +36,7 @@ deploy:
       branch:
         - /v(\d+\.)?(\d+\.)?(\*|\d+)$/
   - provider: npm
+    skip_cleanup: false # deprecated, use cleanup with new dpl ver
     cleanup: true
     email: "ugate.public@gmail.com"
     api_token: $NPM_TOKEN  # Set in the settings page of your repository, as a secure variable
