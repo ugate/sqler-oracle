@@ -36,8 +36,8 @@
     "jsdoc": "^3.6.4",
     "jsdocp": "^1.2.1",
     "minami": "^1.2.3",
-    "oracledb": ">=4.2.0",
-    "sqler": ">=5.7.0"
+    "oracledb": "^4.2.0",
+    "sqler": "^5.8.0"
   },
   "files": [
     "/index.js",
