@@ -8,7 +8,7 @@ node_js:
   - "lts/*"
 # paths required by the oracledb module
 env:
-  - ORA_REPO_VER=v1.0.1 ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe ORACLE_SID=XE OCI_LIB_DIR=/u01/app/oracle/product/11.2.0/xe/lib LD_LIBRARY_PATH=/u01/app/oracle/product/11.2.0/xe/lib CI=TRAVIS UV_THREADPOOL_SIZE=10
+  - ORA_REPO_VER=v1.3.3 ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe ORACLE_SID=XE OCI_LIB_DIR=/u01/app/oracle/product/11.2.0/xe/lib LD_LIBRARY_PATH=/u01/app/oracle/product/11.2.0/xe/lib CI=TRAVIS UV_THREADPOOL_SIZE=10
 before_install:
   - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/install.sh
   - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/grant.sh
