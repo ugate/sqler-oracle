@@ -54,7 +54,7 @@ module.exports = class OracleDialect {
   constructor(priv, connConf, track, errorLogger, logger, debug) {
     const dlt = internal(this);
     dlt.at.track = track;
-    dlt.at.connections = {};
+    dlt.at.connections = new Map();
     dlt.at.state = {
       pending: 0,
       connection: {
@@ -117,7 +117,7 @@ module.exports = class OracleDialect {
    * @returns {Object} The Oracle connection pool
    */
   async init(opts) {
-    const dlt = internal(this), numSql = opts.numOfPreparedStmts;
+    const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
     // statement cache should account for the number of prepared SQL statements/files by a factor of 3x to accomodate up to 3x fragments for each SQL file
     dlt.at.pool.orcaleConf.stmtCacheSize = numSql * 3;
     let oraPool;
@@ -158,12 +158,12 @@ module.exports = class OracleDialect {
    */
   async beginTransaction(txId) {
     const dlt = internal(this);
-    if (dlt.at.connections[txId]) return;
+    if (dlt.at.connections.has(txId)) return;
     if (dlt.at.logger) {
       dlt.at.logger(`Oracle: Beginning transaction on connection pool "${dlt.at.pool.orcaleConf.poolAlias}"`);
     }
     const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
-    dlt.at.connections[txId] = await dlt.this.getConnection(pool, { transactionId: txId });
+    dlt.at.connections.set(txId, await dlt.this.getConnection(pool, { transactionId: txId }));
   }
 
   /**
@@ -171,12 +171,14 @@ module.exports = class OracleDialect {
    * @param {String} sql the SQL to execute
    * @param {OracleExecOptions} opts The execution options
    * @param {String[]} frags the frament keys within the SQL that will be retained
+   * @param {Manager~ExecMeta} meta The SQL execution metadata
+   * @param {(Manager~ExecErrorOptions | Boolean)} [errorOpts] The error options to use
    * @returns {Dialect~ExecResults} The execution results
    */
-  async exec(sql, opts, frags) {
+  async exec(sql, opts, frags, meta, errorOpts) {
     const dlt = internal(this);
     const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
-    let conn, bndp = {}, rslts, xopts;
+    let conn, bndp = {}, rslts, xopts, error;
     try {
       // interpolate and remove unused binds since
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
@@ -189,41 +191,45 @@ module.exports = class OracleDialect {
       conn = await dlt.this.getConnection(pool, opts);
       dlt.at.state.connection.count = pool.connectionsOpen;
       dlt.at.state.connection.inUse = pool.connectionsInUse;
-      
-      rslts = await conn.execute(sql, bndp, xopts);
 
-      const rtn = {
-        rows: rslts.rows,
-        raw: rslts
-      };
-      if (opts.autoCommit) {
-        await operation(dlt, 'close', true, conn, opts)();
+      const rtn = {};
+
+      if (opts.prepareStatement) {
+        throw new Error(`Prepared statements are not implemented yet`);
       } else {
-        dlt.at.state.pending++;
-        rtn.commit = operation(dlt, 'commit', true, conn, opts);
-        rtn.rollback = operation(dlt, 'rollback', true, conn, opts);
+        rslts = await conn.execute(sql, bndp, xopts);
       }
-      return rtn;
-    } catch (err) {
-      if (conn) {
-        try {
-          conn.close();
-        } catch (cerr) {
-          err.closeError = cerr;
+
+      rtn.rows = rslts.rows;
+      rtn.raw = rslts;
+
+      if (opts.transactionId) {
+        if (opts.autoCommit) {
+          await operation(dlt, 'release', true, conn, opts)();
+        } else {
+          dlt.at.state.pending++;
+          rtn.commit = operation(dlt, 'commit', true, conn, opts);
+          rtn.rollback = operation(dlt, 'rollback', true, conn, opts);
         }
       }
-      const msg = ` (BINDS: ${JSON.stringify(bndp)}, FRAGS: ${frags ? Array.isArray(frags) ? frags.join(', ') : frags : 'N/A'})`;
+
+      return rtn;
+    } catch (err) {
+      error = err;
       if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Oracle: Failed to execute the following SQL: ${msg}\n${sql}`, err);
+        dlt.at.errorLogger(`Oracle: Failed to execute the following SQL:\n${sql}`, err);
       }
-      err.message += msg;
-      err.sqlerOracle = {
-        sql,
-        options: opts,
-        binds: bndp,
-        results: rslts
-      };
+      err.sqlerOracle = {};
       throw err;
+    } finally {
+      // transactions/prepared statements need the connection to remain open until commit/rollback/unprepare
+      if (conn && !opts.transactionId && !opts.prepareStatement) {
+        try {
+          await operation(dlt, 'release', true, conn, opts)();
+        } catch (cerr) {
+          if (error) error.closeError = cerr;
+        }
+      }
     }
   }
 
@@ -237,7 +243,7 @@ module.exports = class OracleDialect {
   async getConnection(pool, opts) {
     const dlt = internal(this);
     const txId = opts && opts.transactionId;
-    let conn = txId ? dlt.at.connections[txId] : null;
+    let conn = txId ? dlt.at.connections.get(txId) : null;
     if (!conn) {
       const hasDrvrOpts = opts && !!opts.driverOptions;
       const poolAttrs = (hasDrvrOpts && opts.driverOptions.pool) || {};
@@ -259,7 +265,7 @@ module.exports = class OracleDialect {
         dlt.at.logger(`Oracle: Closing connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
       }
       if (pool) await pool.close();
-      dlt.at.connections = {};
+      dlt.at.connections.clear();
       dlt.at.state.connection.count = 0;
       dlt.at.state.connection.inUse = 0;
       return dlt.at.state.pending;
@@ -313,7 +319,7 @@ function operation(dlt, name, reset, conn, opts) {
       }
       if (conn) await conn[name]();
       if (reset) {
-        if (opts && opts.transactionId) delete dlt.at.connections[opts.transactionId];
+        if (opts && opts.transactionId) dlt.at.connections.delete(opts.transactionId);
         dlt.at.state.pending = 0;
       }
     } catch (err) {
@@ -324,14 +330,12 @@ function operation(dlt, name, reset, conn, opts) {
       }
       throw error;
     } finally {
-      if (conn && name !== 'close') {
+      if (conn && name !== 'end' && name !== 'release') {
         try {
-          await conn.close();
+          await conn.release();
         } catch (cerr) {
           if (error) {
-            error.sqlOracle = {
-              closeError: cerr
-            };
+            error.closeError = cerr;
           }
         }
       }

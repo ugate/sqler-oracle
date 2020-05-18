@@ -64,7 +64,7 @@ module.exports = class OracleTestDialect extends OracleDialect {
   /**
    * @inheritdoc
    */
-  async exec(sql, opts, frags) {
+  async exec(sql, opts, frags, meta, errorOpts) {
     expect(sql, 'sql').to.be.string();
 
     expect(opts, 'opts').to.be.object();
@@ -76,7 +76,10 @@ module.exports = class OracleTestDialect extends OracleDialect {
     expect(state.connection.count, 'dialect.connection.count').to.be.number();
     expect(state.connection.inUse, 'dialect.connection.inUse').to.be.number();
 
-    return super.exec(sql, opts, frags);
+    expect(meta.name, 'meta').to.be.string();
+    expect(meta.name, 'meta').to.not.be.empty();
+
+    return super.exec(sql, opts, frags, meta, errorOpts);
   }
 
   /**
