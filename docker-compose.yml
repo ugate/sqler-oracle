@@ -1,0 +1,48 @@
+version: '3.9'
+x-env: &env-vars
+  ORACLE_PWD: sqlerOracl3
+x-env-sqler: &env-tokens
+  GITHUB_TOKEN: ${GITHUB_TOKEN}
+  NPM_TOKEN: ${NPM_TOKEN}
+services:
+  # Oracle XE: https://hub.docker.com/r/ugate/oraclexe
+  sqler_oracle:
+    image: ugate/oraclexe:18.4.0-xe
+    container_name: sqler_oracle
+    restart: unless-stopped
+    environment:
+      <<: *env-vars
+    networks:
+      - app
+    ports:
+      - 1521:1521
+      - 5500:5500
+  # NodeJS for sqler dialect testing
+  sqler_oracle_dialect:
+    container_name: sqler_oracle_dialect
+    depends_on:
+      - sqler_oracle
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+      args:
+        <<: *env-vars
+    links:
+      - "sqler_oracle:sqler_oracle_database"
+    networks:
+      - app
+    healthcheck:
+      test: curl --fail http://localhost:80/healthcheck || exit 1
+      timeout: 20s
+      retries: 10
+    ports:
+      - 4005:80
+    restart: unless-stopped
+    environment:
+      <<: [ *env-vars, *env-tokens ]
+    volumes:
+      - ./docs:/home/node/app/docs
+networks:
+  app:
+    driver: bridge
+    name: sqler_oracle_net

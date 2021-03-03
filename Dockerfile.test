@@ -1,0 +1,24 @@
+FROM node:14
+
+RUN apt-get update && \
+    apt-get install -y vim && \
+    # install C compiler for native node deps
+    apt-get install -y software-properties-common build-essential && \
+    apt-get install -y libaio1 && \
+    # install Oracle Instant Client (required by driver)
+#    wget https://download.oracle.com/otn_software/linux/instantclient/19800/instantclient-basic-linux.x64-19.8.0.0.0dbru.zip && \
+    wget https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip && \
+    mkdir /opt/oracle && \
+    unzip instantclient-basiclite-linuxx64.zip -d /opt/oracle && \
+    echo /opt/oracle/$(ls -ltr /opt/oracle |grep ^d |head -n 1 | awk '{print $9}') > /etc/ld.so.conf.d/oracle-instantclient.conf && \
+    ldconfig && \
+    rm -f instantclient-basiclite-linuxx64.zip && apt-get -y autoremove && apt-get -y clean
+
+WORKDIR /home/node/app
+
+COPY . .
+
+RUN mkdir -p docs && \
+    ls -al /home/node/app
+
+CMD [ "npm", "run", "test-docker" ]

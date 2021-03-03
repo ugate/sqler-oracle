@@ -1,0 +1,22 @@
+{
+  "db": {
+    "dialects": {
+      "oracle": "sqler-oracle"
+    },
+    "connections": [
+      {
+        "id": "oracle",
+        "name": "oracle",
+        "dir": "db/oracle",
+        "service": "XE",
+        "dialect": "oracle",
+        "pool": {},
+        "driverOptions": {
+          "global": {
+            "maxRows": 0
+          }
+        }
+      }
+    ]
+  }
+}

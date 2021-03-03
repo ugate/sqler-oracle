@@ -1,8 +1,8 @@
 {
   "1-manual": {
-    "title": "Manual/Examples"
+    "title": "Getting Started"
   },
-  "2-testing": {
-    "title": "Testing"
+  "2-usage": {
+    "title": "Usage"
   }
 }

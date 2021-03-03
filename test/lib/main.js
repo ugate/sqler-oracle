@@ -7,18 +7,25 @@ const Path = require('path');
 const Fs = require('fs');
 const Os = require('os');
 const { expect } = require('@hapi/code');
+const readChunk = require('read-chunk');
+const imageType = require('image-type');
 // TODO : import { Labrat, LOGGER } from '@ugate/labrat';
 // TODO : import { Manager } from 'sqler.mjs';
 // TODO : import * as Fs from 'fs';
 // TODO : import * as Os from 'os';
 // TODO : import { expect } from '@hapi/code';
+// TODO : import * as readChunk from 'readChunk';
+// TODO : import * as imageType from 'imageType';
 
-const priv = {
+const CONF_SUFFIX_VAR = 'SQLER_CONF_FILE_SUFFIX';
+const test = {
   mgr: null,
   cache: null,
   rowCount: 2,
   mgrLogit: !!LOGGER.info,
-  lobFile: Path.join(process.cwd(), 'test/files/audit-report.pdf')
+  vendor: 'oracle',
+  defaultPort: 1521,
+  conf: {}
 };
 
 // TODO : ESM uncomment the following line...
@@ -29,55 +36,63 @@ class Tester {
    * Create table(s) used for testing
    */
   static async before() {
-    priv.ci = 'CI' in process.env;
-    Labrat.header(`Creating test tables ${priv.ci ? `(CI=${priv.ci})` : ''}`);
+    test.suffix = CONF_SUFFIX_VAR in process.env;
+    Labrat.header(`${test.vendor}: Creating test tables (if any)${test.suffix ? ` ${CONF_SUFFIX_VAR}=${test.suffix}` : ''}`);
     
     const conf = getConf();
-    priv.cache = null;
-    priv.mgr = new Manager(conf, priv.cache, priv.mgrLogit);
-    await priv.mgr.init();
+    test.cache = null;
+    test.mgr = new Manager(conf, test.cache, test.mgrLogit || generateTestAbyssLogger);
+    await test.mgr.init();
     
-    await priv.mgr.db.tst.ora_test.create.tables();
-    priv.created = true;
+    if (test.mgr.db[test.vendor].setup) {
+      // TODO : Create database?
+      //const createDB = getCrudOp('create', test.vendor, 'database', true);
+      //await createDB(test.mgr, test.vendor);
+      const createTB = getCrudOp('create', test.vendor, 'tables', true);
+      await createTB(test.mgr, test.vendor);
+    }
+    test.created = true;
   }
 
   /**
    * Drop table(s) used for testing
    */
   static async after() {
-    if (!priv.created) {
-      Labrat.header('Skipping dropping of test tables');
+    if (!test.created) {
+      Labrat.header(`${test.vendor}: Skipping dropping of test tables/database`);
       return;
     }
-    Labrat.header('Dropping test tables');
+    Labrat.header(`${test.vendor}: Dropping test tables/database (if any)`);
     
     const conf = getConf();
-    priv.cache = null;
-    if (!priv.mgr) {
-      priv.mgr = new Manager(conf, priv.cache, priv.mgrLogit);
-      await priv.mgr.init();
+    test.cache = null;
+    if (!test.mgr) {
+      test.mgr = new Manager(conf, test.cache, test.mgrLogit || generateTestAbyssLogger);
+      await test.mgr.init();
     }
     
-    if (priv.ci) { // drop isn't really need in CI env
-      try {
-        await priv.mgr.db.tst.ora_test.delete.tables();
-        priv.created = false;
-      } catch (err) {
-        if (LOGGER.warn) LOGGER.warn(`Failed to delete tables (CI=${priv.ci})`, err);
+    try {
+      if (test.mgr.db[test.vendor].setup) {
+        const deleteTB = getCrudOp('delete', test.vendor, 'tables', true);
+        await deleteTB(test.mgr, test.vendor);
+        // TODO : Drop database?
+        //const deleteDB = getCrudOp('delete', test.vendor, 'database', true);
+        //await deleteDB(test.mgr, test.vendor);
       }
-    } else {
-      await priv.mgr.db.tst.ora_test.delete.tables();
-      priv.created = false;
+      test.created = false;
+    } catch (err) {
+      if (LOGGER.warn) LOGGER.warn(`${test.vendor}: Failed to delete tables/database${test.suffix ? ` (${CONF_SUFFIX_VAR}=${test.suffix})` : ''}`, err);
+      throw err;
     }
-
+    return test.mgr.close();
   }
 
   /**
    * Start cache (if present)
    */
   static async beforeEach() {
-    const cch = priv.cache;
-    priv.cache = null;
+    const cch = test.cache;
+    test.cache = null;
     if (cch && cch.start) await cch.start();
   }
 
@@ -85,108 +100,344 @@ class Tester {
    * Stop cache (if present)
    */
   static async afterEach() {
-    const cch = priv.cache;
-    priv.cache = null;
+    const cch = test.cache;
+    test.cache = null;
     if (cch && cch.stop) await cch.stop();
   }
 
-  static async confHostMissing() {
-    const conf = getConf();
-    conf.univ.db.testId.host = '';
-    new Manager(conf, priv.cache, priv.mgrLogit);
+  //======================== Executions ========================
+
+  /**
+   * Test CRUD operations for a specified `priv.vendor` and `priv.mgr`
+   */
+  static async crud() {
+    Labrat.header(`${test.vendor}: Running CRUD tests`, 'info');
+    const rslts = new Array(3);
+    let rslti = -1, lastUpdated;
+
+    // expect CRUD results
+    const crudly = (rtn, label, nameIncl, count = 2) => {
+      const rslts = Array.isArray(rtn) ? rtn : [rtn];
+      let cnt = 0, updated;
+      for (let rslt of rslts) {
+        if (!rslt.rows) continue;
+        expect(rslt.rows, `CRUD ${label} rows`).array();
+        if (!label.includes('read')) continue;
+        cnt++;
+        expect(rslt.rows, `CRUD ${label} rows.length`).length(count);
+        for (let row of rslt.rows) {
+          expect(row, `CRUD ${label} row`).object();
+          if (nameIncl) expect(row.name, `CRUD ${label} row.name`).includes(nameIncl);
+          updated = new Date(row.updated) || row.updated;
+          expect(updated, `CRUD ${label} row.updated`).date();
+          if (lastUpdated) expect(updated, `CRUD ${label} row.updated > lastUpdated`).greaterThan(lastUpdated);
+          // expect binary report image
+          if (row.report) {
+            // report will come in as stream rather than buffer
+            // expect(row.report, 'row.report').to.be.buffer();
+            if (row.reportPath) {
+              const reportBuffer = readChunk.sync(row.reportPath, 0, 12);
+              const reportType = imageType(reportBuffer);
+              // TODO : validate image Mime-Type (currently, null)
+              //expect(reportType, `"${row.reportPath}" Image Type`).to.be.object();
+              //expect(reportType.mime, `"${row.reportPath}" Image Mime-Type`).to.equal('image/png');
+            }
+          }
+        }
+      }
+      if (cnt > 0) lastUpdated = updated;
+    };
+
+    let create, read, update, del;
+
+    create = getCrudOp('create', test.vendor, 'table.rows');
+    rslts[++rslti] = await create(test.mgr, test.vendor);
+    crudly(rslts[rslti], 'create');
+  
+    read = getCrudOp('read', test.vendor, 'table.rows');
+    rslts[++rslti] = await read(test.mgr, test.vendor);
+    crudly(rslts[rslti], 'read', 'TABLE');
+
+    update = getCrudOp('update', test.vendor, 'table.rows');
+    rslts[++rslti] = await update(test.mgr, test.vendor);
+    crudly(rslts[rslti], 'update');
+  
+    rslts[++rslti] = await read(test.mgr, test.vendor);
+    crudly(rslts[rslti], 'update read', 'UPDATE');
+  
+    del = getCrudOp('delete', test.vendor, 'table.rows');
+    rslts[++rslti] = await del(test.mgr, test.vendor);
+    crudly(rslts[rslti], 'delete');
+  
+    rslts[++rslti] = await read(test.mgr, test.vendor);
+    crudly(rslts[rslti], 'delete read', null, 0);
+
+    if (LOGGER.debug) LOGGER.debug(`CRUD ${test.vendor} execution results:`, ...rslts);
+    Labrat.header(`${test.vendor}: Completed CRUD tests`, 'info');
+    return rslts;
   }
 
-  static async confServiceMissing() {
-    const conf = getConf();
-    conf.db.connections[0].service = false;
-    new Manager(conf, priv.cache, priv.mgrLogit);
-  }
-
-  static async confDriverOptionsMissing() {
-    const conf = getConf();
-    conf.db.connections[0].driverOptions = false;
-    new Manager(conf, priv.cache, priv.mgrLogit);
-  }
-
-  static async confCredentialsInvalid() {
-    const conf = getConf();
-    conf.univ.db.testId.password = 'fakePassowrd';
-    const mgr = new Manager(conf, priv.cache, false);
-    await mgr.init();
+  static async execDriverOptionsAlt() {
+    const id = 400, name = 'TEST ALT', date = new Date();
+    let created, rslt;
     try {
-      await mgr.close();
-    } catch (err) {
-     // consume since the connection may not be init
-     if (LOGGER.debug) LOGGER.debug(`Failed to close connection for invalid credentials`, err);
+      created = await test.mgr.db[test.vendor].create.table1.rows({
+        prepareStatement: true,
+        binds: {
+          id, name, created: date, updated: date
+        }
+      });
+      expect(created, 'prepared statement results').to.be.object();
+      expect(created.unprepare, 'prepared statement results unprepare').to.be.function();
+      await created.unprepare();
+      rslt = await test.mgr.db[test.vendor].read.table.rows({
+        binds: { name },
+        driverOptions: {
+          query: {
+            rowMode: 'array'
+          }
+        }
+      });
+    } finally {
+      if (created) {
+        await test.mgr.db[test.vendor].delete.table1.rows({
+          binds: { id }
+        });
+      }
+    }
+
+    if (rslt) { // ensure the results are in array format from rowMode
+      expect(rslt.rows, 'alt rslt.rows').to.be.array();
+      expect(rslt.rows, 'alt rslt.rows').to.have.length(1);
+      expect(rslt.rows[0], 'alt rslt.rows[0]').to.be.array();
+      expect(rslt.rows[0], 'alt rslt.rows[0]').to.have.length(5);
+      expect(rslt.rows[0][0], 'alt rslt.rows[0][0] (id)').to.equal(id);
+      expect(rslt.rows[0][1], 'alt rslt.rows[0][1] (name)').to.equal(name);
+      expect(rslt.rows[0][2], 'alt rslt.rows[0][2] (report)').to.be.null();
+      expect(rslt.rows[0][3], 'alt rslt.rows[0][3] (created)').to.equal(date);
+      expect(rslt.rows[0][4], 'alt rslt.rows[0][4] (updated)').to.equal(date);
     }
   }
 
-  static async confCredentialsInvalidReturnErrors() {
-    const conf = getConf();
-    conf.univ.db.testId.password = 'fakePassowrd';
-    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
-    const errd = await mgr.init(true), label = 'Manager.init() return';
-
-    expect(errd, label).to.be.object();
-    expect(errd.errors, `${label}.errors`).to.be.array();
-    expect(errd.errors[0], `${label}.errors[0]`).to.be.error();
-
-    try {
-      await mgr.close();
-    } catch (err) {
-      // consume since the connection may not be init
-      if (LOGGER.debug) LOGGER.debug(`Failed to close connection for invalid credentials`, err);
-    }
+  static async sqlInvalidThrow() {
+    return test.mgr.db[test.vendor].error.update.non.exist({}, ['error']);
   }
 
-  static async confDriverOptionsGlobalNonOwnProps() {
-    const conf = getConf(), conn = conf.db.connections[0];
-    conn.driverOptions.pool = false;
-    const TestGlobal = class {};
-    TestGlobal.prototype.skip = 'Skip adding this global property';
-    conn.driverOptions.global = new TestGlobal();
-    conn.driverOptions.global.fakeObject = {};
-    conn.driverOptions.global.fakeConstant = '${FAKE_CONSTANT_NAME}';
-    conn.driverOptions.global.autoCommit = false;
-    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
+  static async bindsInvalidThrow() {
+    const date = new Date();
+    return test.mgr.db[test.vendor].create.table1.rows({
+      binds: {
+        id: 500, name: 'SHOULD NEVER GET INSERTED (from bindsInvalidThrow)', /* "created" missing should throw error */ updated: date
+      }
+    });
+  }
+
+  static async preparedStatementNameThrow() {
+    const date = new Date();
+    return test.mgr.db[test.vendor].create.table1.rows({
+      binds: {
+        id: 500, name: 'SHOULD NEVER GET INSERTED (from bindsInvalidThrow)', created: date, updated: date
+      },
+      driverOptions: {
+        query: {
+          name: 'SOME_PREPARED_STATEMENT_NAME' // should fail since PS names use meta
+        }
+      }
+    });
+  }
+
+  static async transactionLeaveOpen() {
+    return test.mgr.db[test.vendor].beginTransaction();
+  }
+
+  static async transactionRollback() {
+    const tx = await test.mgr.db[test.vendor].beginTransaction();
+    const date = new Date();
+    const rslt = await test.mgr.db[test.vendor].create.table1.rows({
+      autoCommit: false,
+      transactionId: tx.id,
+      binds: {
+        id: 500, name: 'SHOULD NEVER GET INSERTED (from transactionRollback)', created: date, updated: date
+      }
+    });
+    return tx.rollback();
+  }
+
+  //====================== Configurations ======================
+
+  static async initThrow() {
+    // need to set a conf override to prevent overwritting of privateConf.username
+    const conf = getConf({ pool: null });
+    conf.univ.db[test.vendor].username = 'invalid';
+    conf.univ.db[test.vendor].password = 'invalid';
+    const mgr = new Manager(conf, test.cache, test.mgrLogit || generateTestAbyssLogger);
     await mgr.init();
     return mgr.close();
   }
 
-  static async confDriverOptionsConnAndPoolNames() {
-    const conf = getConf(), conn = conf.db.connections[0];
-    conn.driverOptions = conn.driverOptions || {};
-    conn.driverOptions.global = conn.driverOptions.global || {};
-    conn.driverOptions.global.connectionClass = 'TestDriverOptions';
-    conn.pool = { alias: 'testDriverOptions' };
-    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
+  static async poolNone() {
+    const conf = getConf({ pool: null, connection: null });
+    const mgr = new Manager(conf, test.cache, test.mgrLogit || generateTestAbyssLogger);
     await mgr.init();
     return mgr.close();
   }
 
-  static async confDriverOptionsSid() {
+  static async poolPropSwap() {
+    const conf = getConf({
+      pool: (prop, conn) => {
+        conn[prop] = conn[prop] || {};
+        if (conn[prop].hasOwnProperty('max')) {
+          delete conn[prop].max;
+        } else {
+          conn[prop].max = 10;
+        }
+        if (conn[prop].hasOwnProperty('min')) {
+          delete conn[prop].min;
+        } else {
+          conn[prop].min = conn[prop].hasOwnProperty('max') ? conn[prop].max : 10;
+        }
+        if (conn[prop].hasOwnProperty('idle')) {
+          delete conn[prop].idle;
+        } else {
+          conn[prop].idle = 1800;
+        }
+        if (conn[prop].hasOwnProperty('timeout')) {
+          delete conn[prop].timeout;
+        } else {
+          conn[prop].timeout = 10000;
+        }
+      }
+    });
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async driverOptionsNoneThrow() {
+    const conf = getConf({ driverOptions: null });
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async driverOptionsPoolConnNone() {
+    const conf = getConf({
+      driverOptions: (prop, conn) => {
+        conn[prop] = conn[prop] || {};
+        conn[prop].pool = null;
+        conn[prop].connection = null;
+      }
+    });
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async driverOptionsPoolConnSwap() {
+    const conf = getConf({
+      driverOptions: (prop, conn) => {
+        conn[prop] = conn[prop] || {};
+        if (conn[prop].pool && !conn[prop].connection) {
+          conn[prop].connection = conn[prop].pool;
+          conn[prop].pool = null;
+        } else if (!conn[prop].pool && conn[prop].connection) {
+          conn[prop].pool = conn[prop].connection;
+          conn[prop].connection = null;
+        } else {
+          conn[prop].pool = {};
+          conn[prop].connection = {};
+        }
+      }
+    });
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async hostPortSwap() {
+    // need to set a conf override to prevent overwritting of privateConf properties for other tests
+    const conf = getConf({ pool: null });
+    if (conf.univ.db[test.vendor].host) {
+      //delete conf.univ.db[test.vendor].host;
+      conf.univ.db[test.vendor].host = `sqler_${test.vendor}_database`; // need to use alias hostname from docker "links"
+    } else {
+      conf.univ.db[test.vendor].host = realConf.univ.db[test.vendor].host;
+    }
+    if (conf.univ.db[test.vendor].hasOwnProperty('port')) {
+      delete conf.univ.db[test.vendor].port;
+    } else {
+      conf.univ.db[test.vendor].port = test.defaultPort;
+    }
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async multipleConnections() {
+    const conf = getConf();
+    const conn = JSON.parse(JSON.stringify(conf.db.connections[0]));
+    conn.name += '2';
+    conf.db.connections.push(conn);
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async closeBeforeInit() {
+    const conf = getConf();
+    const mgr = new Manager(conf, test.cache, test.mgrLogit || generateTestAbyssLogger);
+    return mgr.close();
+  }
+
+  static async state() {
+    const poolCount = 4;
+    const conf = getConf({
+      pool: (prop, conn) => {
+        conn[prop] = conn[prop] || {};
+        conn[prop].min = conn[prop].max = poolCount;
+      }
+    });
+    const mgr = new Manager(conf, test.cache, test.mgrLogit || generateTestAbyssLogger);
+    await mgr.init();
+
+    const state = await mgr.state();
+    expect(state, 'state').to.be.object();
+    expect(state.result, 'state.result').to.be.object();
+    expect(state.result[test.vendor], `state.result.${test.vendor}`).to.be.object();
+    expect(state.result[test.vendor].pending, `state.result.${test.vendor}.pending`).to.equal(0);
+    expect(state.result[test.vendor].connection, `state.result.${test.vendor}.connection`).to.be.object();
+    // there is no min pool count (should have 1 connection from init), need to ensure that the max is not exceeded?
+    expect(state.result[test.vendor].connection.count, `state.result.${test.vendor}.connection.count`).to.equal(1);
+    expect(state.result[test.vendor].connection.inUse, `state.result.${test.vendor}.connection.inUse`).to.equal(0);
+
+    return mgr.close();
+  }
+
+  //====================== Vendor Specific ======================
+
+  static async driverOptionsSid() {
     return expectSid(getConf());
   }
 
-  static async confDriverOptionsSidWithPing() {
+  static async driverOptionsSidWithPing() {
     return expectSid(getConf(), { pingOnInit: true });
   }
 
-  static async confDriverOptionsSidDefaults() {
+  static async driverOptionsSidDefaults() {
     const conf = getConf(), conn = conf.db.connections[0];
     conf.univ.db.testId.port = conn.port = false;
     conf.univ.db.testId.protocol = conn.protocol = false;
     return expectSid(conf);
   }
 
-  static async confDriverOptionsSidMultiple() {
+  static async driverOptionsSidMultiple() {
     const conf = getConf(), conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
     conn2.name += '2';
     conf.db.connections.push(conn2);
     return expectSid(conf);
   }
 
-  static async confDriverOptionsPool() {
+  static async driverOptionsPool() {
     const conf = getConf(), conn = conf.db.connections[0];
     conn.driverOptions = conn.driverOptions || {};
     conn.driverOptions.pool = conn.driverOptions.pool || {};
@@ -197,358 +448,72 @@ class Tester {
     conn.driverOptions.pool.poolIncrement = 2;
     conn.driverOptions.pool.queueTimeout = 5000;
     conn.driverOptions.pool.poolAlias = 'testDriverOptionsPool';
-    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
     await mgr.init();
     return mgr.close();
-  }
-
-  static async confConnectionAlternatives() {
-    const conf = getConf(), conn = conf.db.connections[0];
-    conn.host = conf.univ.db.testId.host;
-    conn.port = conf.univ.db.testId.port;
-    conn.protocol = conf.univ.db.testId.protocol;
-    conf.univ.db.testId.host = false;
-    conf.univ.db.testId.port = false;
-    conf.univ.db.testId.protocol = false;
-    const mgr = new Manager(conf, priv.cache, priv.mgrLogit);
-    await mgr.init();
-    return mgr.close();
-  }
-
-  //======================== Executions ========================
-
-  static async createBindsMissing() {
-    return rows('create', null, {
-      binds: { created: new Date() }
-    });
-  }
-
-  static async create() {
-    if (!priv.mgr) {
-      await crudManager();
-    }
-    // keep multiple transactions open at the same time to ensure
-    // each transaction is kept isolated
-    const txId = await priv.mgr.db.tst.beginTransaction();
-    const prom = insertLob(priv.lobFile, txId);
-
-    await rows('create', { autoCommit: false });
-
-    const rslt = await prom;
-    return rslt.commit();
-  }
-
-  static async readAfterCreateAll() {
-    return rows('read-all', {
-      type: 'READ',
-      driverOptions: {
-        exec: {
-          // orcaledb constant for array output
-          outFormat: '${OUT_FORMAT_ARRAY}'
-        }
-      }
-    });
-  }
-
-  static async readAfterCreate() {
-    if (!priv.mgr) {
-      await crudManager();
-    }
-    await readLob();
-    return rows('read');
-  }
-
-  static async update() {
-    return rows('update');
-  }
-
-  static async readAfterUpdate() {
-    return rows('read');
-  }
-
-  static async delete() {
-    return rows('read');
-  }
-
-  static async readAfterDelete() {
-    return rows('read', null, { deleted: true });
   }
 }
 
 // TODO : ESM comment the following line...
 module.exports = Tester;
 
-function getConf(noPool) {
-  const pool = noPool ? undefined : {
-    "min": Math.floor((process.env.UV_THREADPOOL_SIZE - 1) / 2) || 2,
-    "max": process.env.UV_THREADPOOL_SIZE - 1,
-    "increment": 1
-  };
-  const conf = {
-    "mainPath": 'test',
-    "univ": {
-      "db": {
-        "testId": {
-          "host": "localhost",
-          "port": 1521,
-          "protocol": "TCP",
-          "username": Os.userInfo().username,
-          "password": Os.userInfo().username
-        }
-      }
-    },
-    "db": {
-      "dialects": {
-        "oracle": './test/dialects/test-dialect.js'
-      },
-      "connections": [
-        {
-          "id": "testId",
-          "name": "tst",
-          "dir": "db",
-          "service": "XE",
-          "dialect": "oracle",
-          "pool": pool,
-          "driverOptions": {
-            "global": {
-              "maxRows": 0
-            }
-          }
-        }
-      ]
+/**
+ * Generates a configuration
+ * @param {Object} [overrides] The connection configuration override properties. Each property will be deleted from the returned
+ * connection configuration when falsy. When the property value is an function, the `function(propertyName, connectionConf)` will
+ * be called (property not set by the callee). Otherwise, the property value will be set on the configuration.
+ * @returns {Object} The configuration
+ */
+function getConf(overrides) {
+  let conf = test.conf[test.vendor];
+  if (!conf) {
+    conf = test.conf[test.vendor] = JSON.parse(Fs.readFileSync(Path.join(`test/fixtures/${test.vendor}`, `conf${test.suffix || ''}.json`), 'utf8'));
+    if (!test.univ) {
+      test.univ = JSON.parse(Fs.readFileSync(Path.join('test/fixtures', `priv${test.suffix || ''}.json`), 'utf8')).univ;
     }
-  };
+    conf.univ = test.univ;
+    conf.mainPath = 'test';
+    conf.db.dialects.oracle = './test/dialects/test-dialect.js';
+  }
+  if (overrides) {
+    const confCopy = JSON.parse(JSON.stringify(conf));
+    for (let dlct in conf.db.dialects) {
+      confCopy.db.dialects[dlct] = conf.db.dialects[dlct];
+    }
+    conf = confCopy;
+  }
+  let exclude;
+  for (let conn of conf.db.connections) {
+    for (let prop in conn) {
+      if (!conn.hasOwnProperty(prop)) continue;
+      exclude = overrides && overrides.hasOwnProperty(prop);
+      if (exclude) {
+        if (typeof overrides[prop] === 'function') overrides[prop](prop, conn);
+        else if (overrides[prop]) conn[prop] = overrides[prop];
+        else delete conn[prop];
+      } else if (prop === 'pool') {
+        conn.pool.min = Math.floor((process.env.UV_THREADPOOL_SIZE - 1) / 2) || 2;
+        conn.pool.max = process.env.UV_THREADPOOL_SIZE ? process.env.UV_THREADPOOL_SIZE - 1 : conn.pool.min;
+        conn.pool.increment = 1;
+        if (!overrides) return conf; // no need to continue since there are no more options that need to be set manually
+      }
+    }
+  }
   return conf;
 }
 
 /**
- * Performs `priv.rowCount` CRUD operation(s) and validates the results
- * @param {String} op The CRUD operation name
- * @param {Manager~ExecOptions} [opts] The `sqler` execution options
- * @param {Object} [testOpts] The test options
- * @param {Boolean} [testOpts.deleted] Truthy if the rows are expected to be deleted
- * @param {Object} [testOpts.binds] An alternative binds to pass
+ * Gets the `async function` that will execute a CRUD operation
+ * @param {String} cmd The command name of the CRUD operation (e.g. `create`, `read`, etc.)
+ * @param {String} vendor The vendor to use (e.g. `oracle`, `mssql`, etc.)
+ * @param {String} key Key that indicates the file name (w/o extension)
+ * @param {Boolean} [isSetup] Truthy when the CRUD operation is for a setup operation (e.g. creating/dropping tables)
+ * @returns {Function} The `async function(manager)` that will return the CRUD results
  */
-async function rows(op, opts, testOpts) {
-  Labrat.header(`Running ${op}`);
-  if (LOGGER.info) LOGGER.info(`Performing "${op}" on ${priv.rowCount} test records`);
-
-  // default autoCommit = true
-  const autoCommit = opts && opts.hasOwnProperty('autoCommit') ? opts.autoCommit : true;
-
-  if (!priv.mgr) {
-    await crudManager(testOpts && testOpts.hasOwnProperty('managerLogger') ? testOpts.managerLogger : priv.mgrLogit);
-  }
-
-  let txId;
-  if (!autoCommit) {
-    txId = await priv.mgr.db.tst.beginTransaction();
-  }
-  
-  let proms, rowCount = 0, colCount = 4;
-  if (op === 'read-all') {
-    rowCount = priv.rowCount;
-    opts.transactionId = txId;
-    proms = [ priv.mgr.db.tst.auxy.all.rows(opts) ];
-  } else {
-    rowCount = 1; // one row at a time
-    proms = new Array(priv.rowCount);
-    const date = new Date();
-    for (let i = 0, xopts; i < priv.rowCount; i++) {
-      xopts = { transactionId: txId };
-      if (testOpts && testOpts.binds) {
-        xopts.binds = testOpts.binds;
-      } else if (op === 'create') {
-        xopts.binds = {
-          id: { val: i + 1, type: '${NUMBER}', dir: '${BIND_IN}' },
-          name: { val: `${op} ${i}`, dir: '${BIND_INOUT}', maxSize: 500 },
-          created: date,
-          updated: date,
-          someFakeBindNotInSql: 'DONT_INCLUDE_ME'
-        };
-      } else if (op === 'update') {
-        xopts.binds = {
-          id: i + 1, name: `${op} ${i}`,
-          updated: date,
-          someFakeBindNotInSql: 'DONT_INCLUDE_ME'
-        };
-      } else if (op === 'delete') {
-        xopts.binds = {
-          id: i + 1,
-          someFakeBindNotInSql: 'DONT_INCLUDE_ME'
-        };
-      } else if (op === 'read') {
-        xopts.binds = {
-          id: i + 1,
-          someFakeBindNotInSql: 'DONT_INCLUDE_ME'
-        };
-      }
-      if (opts) Object.assign(xopts, opts);
-      proms[i] = priv.mgr.db.tst[op].table.rows(xopts);
-    }
-  }
-
-  const rslts = await Promise.all(proms);
-  let committed;
-  for (let rslt of rslts) {
-    if (LOGGER.info) LOGGER.info(`Result for "${op}"`, rslt);
-    expect(rslt, 'CRUD result').to.be.object();
-    if (op === 'read' || op === 'read-all') {
-      expect(rslt.rows, `${op} result.rows`).to.be.array();
-      if (!testOpts || !testOpts.deleted) {
-        expect(rslt.rows, `${op} result.rows.length`).to.have.length(rowCount);
-        for (let row of rslt.rows) {
-          if (opts && opts.driverOptions && opts.driverOptions.exec && opts.driverOptions.exec.outFormat
-              && opts.driverOptions.exec.outFormat === '${OUT_FORMAT_ARRAY}') {
-            expect(row, `${op} result.rows[] (array)`).to.be.array();
-            expect(row, `${op} result.rows[] (array)`).to.be.length(colCount);
-          } else {
-            expect(row, `${op} result.rows[] (object)`).to.be.object();
-            expect(Object.getOwnPropertyNames(row), `${op} result.rows[] (column count)`).to.be.length(colCount);
-          }
-        }
-      }
-    } else {
-      expect(rslt.raw, `${op} result.raw`).to.be.object();
-      // oracle specific checks
-      expect(rslt.raw.rowsAffected, `${op} result.raw.rowsAffected`).to.equal(rowCount);
-    }
-
-    if (!autoCommit) {
-      expect(rslt.commit, 'result.commit').to.be.function();
-      expect(rslt.rollback, 'result.rollback').to.be.function();
-
-      if (!committed) {
-        await rslt.commit();
-        committed = true;
-      }
-    } else {
-      expect(rslt.commit, 'result.commit').to.be.undefined();
-      expect(rslt.rollback, 'result.rollback').to.be.undefined();
-    }
-  }
-}
-
-/**
- * Inserts a test LOB
- * @param {String} lobFile The LOB file path to insert.
- * @param {String} [txId] The transaction ID to use. __When used, leaves the connection open- should call `commit` or `rollback`.__
- * When a transaction ID is provided the LOB file will be streamed into the LOB for insertion (large files).
- * Otherwise, the LOB file will be read into the insert statement bind (small files).
- * @returns {Manager~ExecResults} The LOB results
- */
-async function insertLob(lobFile, txId) {
-  const date = new Date();
-  const xopts = {
-    binds: { id: 1, created: date, updated: date }
-  };
-  if (txId) {
-    xopts.autoCommit = false;
-    xopts.transactionId = txId;
-  }
-  if (txId) {
-    xopts.binds.report = { type: '${CLOB}', dir: '${BIND_OUT}' };
-  } else {
-    xopts.binds.report = await Fs.promises.readFile(lobFile, 'utf8');
-  }
-  const rslt = await priv.mgr.db.tst.create.table2.rows(xopts);
-  if (!txId) return rslt;
-  return new Promise((resolve, reject) => {
-    if (!rslt.raw.outBinds || !rslt.raw.outBinds.report || !rslt.raw.outBinds.report[0]) {
-      reject(new Error(`Missing RETURNING INTO statement for LOB streaming inserion?`))
-      return;
-    }
-    const lob = rslt.raw.outBinds.report[0];
-    lob.on('finish', async () => {
-      resolve(rslt);
-    });
-    lob.on('error', async (err) => {
-      try {
-        await rslt.rollback();
-      } finally {
-        reject(err);
-      }
-    });
-    let lobStrm;
-    try {
-      lobStrm = Fs.createReadStream(lobFile, 'utf8');
-    } catch (err) {
-      reject(err);
-      return;
-    }
-    lobStrm.on('error', async (err) => {
-      try {
-        await rslt.rollback();
-      } finally {
-        reject(err);
-      }
-    });
-    // copies the report to the LOB
-    lobStrm.pipe(lob);
-  });
-}
-
-/**
- * Reads a test LOB.
- * @param {String} [txId] The transaction in case a dirty read is desired
- * @returns {Manager~ExecResults} The LOB results
- */
-async function readLob(txId) {
-  const date = new Date();
-  const xopts = {
-    binds: { id: 1, created: date, updated: date }
-  };
-  if (txId) {
-    xopts.autoCommit = false,
-    xopts.transactionId = txId;
-  }
-  const rslt = await priv.mgr.db.tst.read.table2.rows(xopts);
-
-  expect(rslt, 'LOB read result').to.be.object();
-  expect(rslt.rows, 'LOB read result.rows').to.be.array();
-
-  for (let row of rslt.rows) {
-    expect(row, 'LOB read result.rows[]').to.be.object();
-    expect(row.report, 'LOB read result.rows[]').to.be.object();
-    //row.report.setEncoding('utf8');
-  }
-}
-
-/**
- * Expects the use of Oracle SIDs to work properly
- * @param {Manager~ConfigurationOptions} conf One or more configurations to generate
- * @param {Object} [testOpts] The SID test options
- * @param {String} [testOpts.sid] An alernative SID to use for `conf.db.connections[].driverOptions.sid`
- * Defaults to the `service` set on the connection.
- * @param {Boolean} [testOpts.pingOnInit] An alternative flag for `conf.db.connections[].driverOptions.pingOnInit`
- */
-async function expectSid(conf, testOpts) {
-  for (let conn of conf.db.connections) {
-    conn.driverOptions.sid = (testOpts && testOpts.sid) || conn.service;
-    // don't ping the connection pool since it may have not been setup
-    conn.driverOptions.pingOnInit = (testOpts && testOpts.hasOwnProperty('pingOnInit')) ? testOpts.pingOnInit : false;
-  }
-  // ensure there is a manager logger for testing
-  const mgr = new Manager(conf, priv.cache, priv.mgrLogit || generateTestAbyssLogger);
-  await mgr.init();
-  return mgr.close();
-}
-
-/**
- * Sets/inits the {@link Manager} for CRUD operations
- * @param {(Boolean | Function)} [managerLogger] The manager logger to pass into the {@link Manager} constructor
- * @returns {*} The {@link Manager.init} return value
- */
-async function crudManager(managerLogger) {
-  const conf = getConf();
-  // need to ensure the connection class and pool alias are consistent accross CRUD tests
-  conf.driverOptions = conf.driverOptions || {};
-  conf.driverOptions.global = conf.driverOptions.global || {};
-  conf.driverOptions.global.connectionClass = 'TEST_CONN_CLASS';
-  conf.pool = conf.pool || {};
-  conf.pool.alias = 'TEST_POOL_ALIAS';
-  priv.mgr = new Manager(conf, priv.cache, managerLogger || priv.mgrLogit);
-  return priv.mgr.init();
+function getCrudOp(cmd, vendor, key, isSetup) {
+  const base = Path.join(process.cwd(), `test/lib/${vendor}${isSetup ? '/setup' : ''}`);
+  const pth = Path.join(base, `${cmd}.${key}.js`);
+  return require(pth);
 }
 
 /**
@@ -561,5 +526,30 @@ function generateTestAbyssLogger() {
 
 // when not ran in a test runner execute static Tester functions (excluding what's passed into Main.run) 
 if (!Labrat.usingTestRunner()) {
+  // ensure unhandled rejections puke with a non-zero exit code
+  process.on('unhandledRejection', up => { throw up });
+  // run the test(s)
   (async () => await Labrat.run(Tester))();
+}
+
+//====================== Vendor Specific ======================
+
+/**
+ * Expects the use of Oracle SIDs to work properly
+ * @param {SQLERConfigurationOptions} conf One or more configurations to generate
+ * @param {Object} [testOpts] The SID test options
+ * @param {String} [testOpts.sid] An alernative SID to use for `conf.db.connections[].driverOptions.sid`
+ * Defaults to the `service` set on the connection.
+ * @param {Boolean} [testOpts.pingOnInit] An alternative flag for `conf.db.connections[].driverOptions.pingOnInit`
+ */
+async function expectSid(conf, testOpts) {
+  for (let conn of conf.db.connections) {
+    conn.driverOptions.sid = (testOpts && testOpts.sid) || conn.service;
+    // don't ping the connection pool since it may have not been setup
+    conn.driverOptions.pingOnInit = (testOpts && testOpts.hasOwnProperty('pingOnInit')) ? testOpts.pingOnInit : false;
+  }
+  // ensure there is a manager logger for testing
+  const mgr = new Manager(conf, test.cache, test.mgrLogit || generateTestAbyssLogger);
+  await mgr.init();
+  return mgr.close();
 }

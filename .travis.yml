@@ -1,45 +1,37 @@
 # When a tagged commit is pushed the documentation pages and npm module are published/deployed:
 os: linux
 # linux dist that includes C++ compiler needed for native node modules
-dist: xenial
-# npm version patch -m "%s Release"
-language: node_js
-node_js:
-  - "lts/*"
-# paths required by the oracledb module
+dist: focal
+language: minimal
+services:
+  - docker
 env:
-  - ORA_REPO_VER=v1.5.5 ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe ORACLE_SID=XE OCI_LIB_DIR=/u01/app/oracle/product/11.2.0/xe/lib LD_LIBRARY_PATH=/u01/app/oracle/product/11.2.0/xe/lib CI=TRAVIS UV_THREADPOOL_SIZE=10
+  - DOCKER_COMPOSE_VERSION=1.27.4
 before_install:
-  - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/install.sh
-  - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/grant.sh
-  - wget https://raw.githubusercontent.com/ugate/repo/$ORA_REPO_VER/oracle/grant.sql
-  - bash ./install.sh
-  - bash ./grant.sh
-  - rm -rf install.sh
-  - rm -rf grant.sh
-  - rm -rf grant.sql
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+  - sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  - sudo apt-get update
+  - sudo apt-get -y -o Dpkg::Options::="--force-confnew" install docker-ce
+  - sudo rm /usr/local/bin/docker-compose
+  - curl -L https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
+  - chmod +x docker-compose
+  - sudo mv docker-compose /usr/local/bin
+  - docker-compose build sqler_oracle_dialect
+  - docker-compose up -d
+  - docker ps -a
+  - chmod +x test/run.sh
 branches:
   only:
     - master
     - "/v*/"
 script:
 # - printenv
-  - "npm test"
+  - test/run.sh sqler_oracle sqler_oracle_dialect "npm test"
 deploy:
-  #edge: true # avoid dpl v2 missing api_token
   - provider: script
     skip_cleanup: true # deprecated, use cleanup with new dpl ver
     cleanup: false
-    script: npm run jsdocp-deploy
-    on:
-      tags: true # only on tagging commit
-      branch:
-        - /v(\d+\.)?(\d+\.)?(\*|\d+)$/
-  - provider: npm
-    skip_cleanup: false # deprecated, use cleanup with new dpl ver
-    cleanup: true
-    email: "ugate.public@gmail.com"
-    api_token: $NPM_TOKEN  # Set in the settings page of your repository, as a secure variable
+    script: test/run.sh sqler_oracle sqler_oracle_dialect npm_deploy
     on:
       tags: true # only on tagging commit
       branch:

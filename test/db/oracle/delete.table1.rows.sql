@@ -1,0 +1,2 @@
+DELETE FROM TEST
+WHERE ID = :id

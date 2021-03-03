@@ -1,0 +1,11 @@
+{
+  "univ": {
+    "db": {
+      "oracle": {
+        "host": "sqler_oracle",
+        "username":"SYSTEM",
+        "password": "sqlerOracl3"
+      }
+    }
+  }
+}

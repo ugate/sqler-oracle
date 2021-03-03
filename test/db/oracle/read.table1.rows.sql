@@ -1,0 +1,4 @@
+SELECT TST.ID AS "id", TST.NAME AS "name", -- EMPTY_CLOB() AS "report",
+TST.CREATED_AT AS "created", TST.UPDATED_AT AS "updated"
+FROM TEST TST
+WHERE UPPER(TST.NAME) LIKE CONCAT(CONCAT('%', UPPER(:name)), '%') 

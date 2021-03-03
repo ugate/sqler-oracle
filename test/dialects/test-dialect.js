@@ -18,12 +18,8 @@ module.exports = class OracleTestDialect extends OracleDialect {
 
     expect(connConf, 'connConf').to.be.object();
     
-    expect(connConf.host || priv.host, 'priv.host').to.be.string();
-    expect(connConf.host || priv.host, 'priv.host.length').to.not.be.empty();
     expect(connConf.username || priv.username, 'priv.username').to.be.string();
     expect(connConf.username || priv.username, 'priv.username.length').to.not.be.empty();
-    expect(connConf.password || priv.password, 'priv.password').to.be.string();
-    expect(connConf.password || priv.password, 'priv.password.length').to.not.be.empty();
 
     expect(connConf.id, 'connConf.id').to.be.string();
     expect(connConf.id, 'connConf.id.length').to.not.be.empty();
@@ -33,8 +29,7 @@ module.exports = class OracleTestDialect extends OracleDialect {
     expect(connConf.dir, 'connConf.dir.length').to.not.be.empty();
     expect(connConf.service, 'connConf.service').to.be.string();
     expect(connConf.service, 'connConf.service.length').to.not.be.empty();
-    expect(connConf.dialect, 'connConf.dialect').to.be.string();
-    expect(connConf.dialect, 'connConf.dialect.length').to.not.be.empty();
+    expect(connConf.dialect, 'connConf.dialect === oracle').to.equal('oracle');
 
     expectDriverOptions(connConf, this);
     expect(this.driver.connectionClass, 'this.driver.connectionClass').to.be.string();
@@ -76,6 +71,7 @@ module.exports = class OracleTestDialect extends OracleDialect {
     expect(state.connection.count, 'dialect.connection.count').to.be.number();
     expect(state.connection.inUse, 'dialect.connection.inUse').to.be.number();
 
+    expect(meta, 'meta').to.be.object();
     expect(meta.name, 'meta').to.be.string();
     expect(meta.name, 'meta').to.not.be.empty();
 
@@ -92,7 +88,7 @@ module.exports = class OracleTestDialect extends OracleDialect {
 
 /**
  * Expects the oracle driver options (when present)
- * @param {Manager~ConnectionOptions} opts The connection options to check
+ * @param {SQLERConnectionOptions} opts The connection options to check
  * @param {OracleTestDialect} dlt The test dialect
  */
 function expectDriverOptions(opts, dlt) {

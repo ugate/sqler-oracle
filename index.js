@@ -1,42 +1,6 @@
 'use strict';
 
 /**
- * Oracle specific extension of the {@link Manager~ConnectionOptions} from the [`sqler`](https://ugate.github.io/sqler/) module.
- * @typedef {Manager~ConnectionOptions} OracleConnectionOptions
- * @property {Object} [driverOptions] The `oracledb` module specific options.
- * @property {String} [driverOptions.sid] An alternative to the default `service` option that indicates that a unique Oracle System ID for the DB will be used instead.
- * @property {Object} [driverOptions.global] An object that will contain properties set on the global `oracledb` module class.
- * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
- * accordingly.
- * For example `driverOptions.global.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `oracledb.someProp = oracledb.ORACLEDB_CONSTANT`.
- * @property {Object} [driverOptions.pool] The pool `conf` options that will be passed into `oracledb.createPool({ conf })`.
- * __Using any of the generic `pool.someOption` will override the `conf` options set on `driverOptions.pool`.__
- * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
- * accordingly.
- * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
- * @property {Boolean} [driverOptions.pingOnInit=true] A truthy flag that indicates if a _ping_ will be performed after the connection pool is created when
- * {@link OracleDialect.init} is called.
- */
-
-/**
- * Oracle specific extension of the {@link Manager~ExecOptions} from the [`sqler`](https://ugate.github.io/sqler/) module. When a property of `binds` contains
- * an object it will be _interpolated_ for property values on the `oracledb` module.
- * For example, `binds.name = { dir: '${BIND_OUT}', type: '${STRING}', maxSize: 40 }` will be interpolated as
- * `binds.name = { dir: oracledb.BIND_OUT, type: oracledb.STRING, maxSize: 40 }`.
- * @typedef {Manager~ExecOptions} OracleExecOptions
- * @property {Object} [driverOptions] The `oracledb` module specific options.
- * @property {Object} [driverOptions.pool] The pool attribute options passed into `oracledbPool.getConnection()`.
- * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
- * accordingly.
- * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
- * @property {Object} [driverOptions.exec] The execution options passed into `oracledbConnection.execute()`.
- * __NOTE: `driverOptions.autoCommit` is ignored in favor of the universal `autoCommit` set directly on the {@link Manager~ExecOptions}.__
- * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
- * accordingly.
- * For example `driverOptions.exec.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `oracledbExecOpts.someProp = oracledb.ORACLEDB_CONSTANT`.
- */
-
-/**
  * Oracle database {@link Dialect} implementation for [`sqler`](https://ugate.github.io/sqler/)
  */
 module.exports = class OracleDialect {
@@ -44,9 +8,9 @@ module.exports = class OracleDialect {
   /**
    * Constructor
    * @constructs OracleDialect
-   * @param {Manager~PrivateOptions} priv The private configuration options
+   * @param {SQLERPrivateOptions} priv The private configuration options
    * @param {OracleConnectionOptions} connConf The individual SQL __connection__ configuration for the given dialect that was passed into the originating {@link Manager}
-   * @param {Manager~Track} track Container for sharing data between {@link Dialect} instances.
+   * @param {SQLERTrack} track Container for sharing data between {@link Dialect} instances.
    * @param {Function} [errorLogger] A function that takes one or more arguments and logs the results as an error (similar to `console.error`)
    * @param {Function} [logger] A function that takes one or more arguments and logs the results (similar to `console.log`)
    * @param {Boolean} [debug] A flag that indicates the dialect should be run in debug mode (if supported)
@@ -54,24 +18,21 @@ module.exports = class OracleDialect {
   constructor(priv, connConf, track, errorLogger, logger, debug) {
     const dlt = internal(this);
     dlt.at.track = track;
-    dlt.at.connections = new Map();
+    dlt.at.transactions = new Map();
+    // sqler compatible state
     dlt.at.state = {
-      pending: 0,
-      connection: {
-        count: 0,
-        inUse: 0
-      }
+      pending: 0
     };
 
-    dlt.at.oracledb = require('oracledb');
-    dlt.at.oracledb.Promise = Promise; // tell Oracle to use the built-in promise
+    dlt.at.driver = require('oracledb');
+    dlt.at.driver.Promise = Promise; // tell Oracle to use the built-in promise
 
     const hasDrvrOpts = !!connConf.driverOptions;
     const dopts = hasDrvrOpts && connConf.driverOptions.global;
-    if (dopts) dlt.at.track.interpolate(dlt.at.oracledb, dopts);
+    if (dopts) dlt.at.track.interpolate(dlt.at.driver, dopts);
     // default autoCommit = true to conform to sqler
-    dlt.at.oracledb.autoCommit = true;
-    dlt.at.oracledb.connectionClass = dlt.at.oracledb.connectionClass || `SqlerOracleGen${Math.floor(Math.random() * 10000)}`;
+    dlt.at.driver.autoCommit = true;
+    dlt.at.driver.connectionClass = dlt.at.driver.connectionClass || `SqlerOracleGen${Math.floor(Math.random() * 10000)}`;
 
     const poolOpts = connConf.pool || {};
     poolOpts.alias = poolOpts.alias || `sqlerOracleGen${Math.floor(Math.random() * 10000)}`;
@@ -80,7 +41,7 @@ module.exports = class OracleDialect {
     dlt.at.debug = debug;
     dlt.at.pool = {
       conf: poolOpts,
-      orcaleConf: hasDrvrOpts && connConf.driverOptions.pool ? dlt.at.track.interpolate({}, connConf.driverOptions.pool, dlt.at.oracledb) : {}
+      orcaleConf: hasDrvrOpts && connConf.driverOptions.pool ? dlt.at.track.interpolate({}, connConf.driverOptions.pool, dlt.at.driver) : {}
     };
     dlt.at.pingOnInit = hasDrvrOpts && connConf.driverOptions.hasOwnProperty('pingOnInit') ? !!connConf.driverOptions.pingOnInit : true;
     dlt.at.connConf = connConf;
@@ -89,7 +50,7 @@ module.exports = class OracleDialect {
     dlt.at.pool.orcaleConf.password = priv.password;
 
     const host = connConf.host || priv.host, port = connConf.port || priv.port || 1521, protocol = connConf.protocol || priv.protocol || 'TCP';
-    if (!host) throw new Error(`Oracle: Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
+    if (!host) throw new Error(`sqler-oracle: Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
 
     if (hasDrvrOpts && connConf.driverOptions.sid) {
       //process.env.TNS_ADMIN = priv.privatePath;
@@ -102,7 +63,7 @@ module.exports = class OracleDialect {
     } else if (connConf.service) {
       dlt.at.pool.orcaleConf.connectString = `${host}/${connConf.service}:${port}`;
       dlt.at.connectionType = 'Service';
-    } else throw new Error(`Oracle: Missing ${connConf.dialect} "service" or "sid" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
+    } else throw new Error(`sqler-oracle: Missing ${connConf.dialect} "service" or "sid" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
     dlt.at.pool.orcaleConf.poolMin = poolOpts.min;
     dlt.at.pool.orcaleConf.poolMax = poolOpts.max;
     dlt.at.pool.orcaleConf.poolTimeout = poolOpts.idle;
@@ -118,18 +79,19 @@ module.exports = class OracleDialect {
    */
   async init(opts) {
     const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
-    // statement cache should account for the number of prepared SQL statements/files by a factor of 3x to accomodate up to 3x fragments for each SQL file
-    dlt.at.pool.orcaleConf.stmtCacheSize = numSql * 3;
+    // there is no prepare/unprepare since oracle uses statement caching: https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching
+    // statement cache should account for the number of prepared functions/files by a factor of 3x to accomodate up to 3x fragments for each SQL file
+    dlt.at.pool.orcaleConf.stmtCacheSize = (numSql || 1) * 3;
     let oraPool;
     try {
-      oraPool = await dlt.at.oracledb.createPool(dlt.at.pool.orcaleConf);
+      oraPool = await dlt.at.driver.createPool(dlt.at.pool.orcaleConf);
       if (dlt.at.logger) {
-        dlt.at.logger(`Oracle: ${dlt.at.connectionType} connection pool "${oraPool.poolAlias}" created with poolPingInterval=${oraPool.poolPingInterval} ` +
+        dlt.at.logger(`sqler-oracle: ${dlt.at.connectionType} connection pool "${oraPool.poolAlias}" created with poolPingInterval=${oraPool.poolPingInterval} ` +
           `stmtCacheSize=${oraPool.stmtCacheSize} (${numSql} SQL files) poolTimeout=${oraPool.poolTimeout} poolIncrement=${oraPool.poolIncrement} ` +
           `poolMin=${oraPool.poolMin} poolMax=${oraPool.poolMax}`);
       }
       if (dlt.at.pingOnInit) {
-        // validate by ping connection from pool
+        // validate by pinging connection from pool
         const conn = await oraPool.getConnection();
         try {
           await conn.ping();
@@ -137,13 +99,13 @@ module.exports = class OracleDialect {
           try {
             await conn.close();
           } catch (err) {
-            // consume ping connection close errors
+            if (dlt.at.errorLogger) dlt.at.errorLogger(`sqler-oracle: Failed to close connection during ping ${err.message}`, err);
           }
         }
       }
       return oraPool;
     } catch (err) {
-      const msg = `Oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`;
+      const msg = `sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`;
       if (dlt.at.errorLogger) dlt.at.errorLogger(`${msg} ${JSON.stringify(err, null, ' ')}`);
       const pconf = Object.assign({}, dlt.at.pool.orcaleConf);
       pconf.password = '***'; // mask sensitive data
@@ -155,15 +117,31 @@ module.exports = class OracleDialect {
   /**
    * Begins a transaction by opening a connection from the pool
    * @param {String} txId The transaction ID that will be started
+   * @returns {SQLERTransaction} The transaction
    */
   async beginTransaction(txId) {
     const dlt = internal(this);
-    if (dlt.at.connections.has(txId)) return;
     if (dlt.at.logger) {
-      dlt.at.logger(`Oracle: Beginning transaction on connection pool "${dlt.at.pool.orcaleConf.poolAlias}"`);
+      dlt.at.logger(`sqler-oracle: Beginning transaction ${txId} on connection pool "${dlt.at.pool.orcaleConf.poolAlias}"`);
     }
-    const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
-    dlt.at.connections.set(txId, await dlt.this.getConnection(pool, { transactionId: txId }));
+    /** @type {SQLERTransaction} */
+    const tx = {
+      id: txId,
+      state: Object.seal({
+        isCommitted: false,
+        isRolledback: false,
+        pending: 0
+      })
+    };
+    const pool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+    /** @type {OracleTransactionObject} */
+    const txo = { tx, conn: await dlt.this.getConnection(pool, dlt.at.connConf) };
+    const opts = { transactionId: tx.id };
+    tx.commit = operation(dlt, 'commit', true, txo, opts, 'unprepare');
+    tx.rollback = operation(dlt, 'rollback', true, txo, opts, 'unprepare');
+    Object.freeze(tx);
+    dlt.at.transactions.set(txId, txo);
+    return tx;
   }
 
   /**
@@ -171,59 +149,66 @@ module.exports = class OracleDialect {
    * @param {String} sql the SQL to execute
    * @param {OracleExecOptions} opts The execution options
    * @param {String[]} frags the frament keys within the SQL that will be retained
-   * @param {Manager~ExecMeta} meta The SQL execution metadata
-   * @param {(Manager~ExecErrorOptions | Boolean)} [errorOpts] The error options to use
-   * @returns {Dialect~ExecResults} The execution results
+   * @param {SQLERExecMeta} meta The SQL execution metadata
+   * @param {(SQLERExecErrorOptions | Boolean)} [errorOpts] The error options to use
+   * @returns {SQLERExecResults} The execution results
    */
   async exec(sql, opts, frags, meta, errorOpts) {
     const dlt = internal(this);
-    const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
-    let conn, bndp = {}, rslts, xopts, error;
+    const pool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+    /** @type {OracleTransactionObject} */
+    const txo = opts.transactionId ? dlt.at.transactions.get(opts.transactionId) : null;
+    let conn, bndp = {}, dopts, rslts, xopts, error;
     try {
       // interpolate and remove unused binds since
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
-      bndp = dlt.at.track.interpolate(bndp, opts.binds, dlt.at.oracledb, props => sql.includes(`:${props[0]}`));
+      bndp = dlt.at.track.interpolate(bndp, opts.binds, dlt.at.driver, props => sql.includes(`:${props[0]}`));
 
-      xopts = !!opts.driverOptions && opts.driverOptions.exec ? dlt.at.track.interpolate({}, opts.driverOptions.exec, dlt.at.oracledb) : {};
+      dopts = opts.driverOptions;
+      xopts = !!dopts && dopts.exec ? dlt.at.track.interpolate({}, dopts.exec, dlt.at.driver) : {};
       xopts.autoCommit = opts.autoCommit;
-      if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.oracledb.OUT_FORMAT_OBJECT;
+      if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.driver.OUT_FORMAT_OBJECT;
 
-      conn = await dlt.this.getConnection(pool, opts);
-      dlt.at.state.connection.count = pool.connectionsOpen;
-      dlt.at.state.connection.inUse = pool.connectionsInUse;
+      conn = txo ? null : await dlt.this.getConnection(pool, opts);
 
       const rtn = {};
 
       if (opts.prepareStatement) {
-        throw new Error(`Prepared statements are not implemented yet`);
-      } else {
-        rslts = await conn.execute(sql, bndp, xopts);
+        rtn.unprepare = async () => {
+          if (dlt.at.logger) {
+            dlt.at.logger(`sqler-oracle: "unprepare" is a noop since Oracle implements the concept of statement caching instead (${
+              meta.path
+            }). See https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching`);
+          }
+        };
       }
+
+      rslts = await (txo ? txo.conn : conn).execute(sql, bndp, xopts);
 
       rtn.rows = rslts.rows;
       rtn.raw = rslts;
 
-      if (opts.transactionId) {
+      if (txo) {
         if (opts.autoCommit) {
-          await operation(dlt, 'release', true, conn, opts)();
+          await operation(dlt, 'commit', false, txo, opts, 'unprepare')();
         } else {
           dlt.at.state.pending++;
-          rtn.commit = operation(dlt, 'commit', true, conn, opts);
-          rtn.rollback = operation(dlt, 'rollback', true, conn, opts);
         }
       }
 
       return rtn;
     } catch (err) {
       error = err;
+      const msg = ` (BINDS: [${Object.keys(bndp)}], FRAGS: ${Array.isArray(frags) ? frags.join(', ') : frags})`;
       if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Oracle: Failed to execute the following SQL:\n${sql}`, err);
+        dlt.at.errorLogger(`Failed to execute the following SQL:\n${sql}`, err);
       }
-      err.sqlerOracle = {};
+      err.message += msg;
+      err.sqlerOracle = dopts;
       throw err;
     } finally {
       // transactions/prepared statements need the connection to remain open until commit/rollback/unprepare
-      if (conn && !opts.transactionId && !opts.prepareStatement) {
+      if (conn) {
         try {
           await operation(dlt, 'release', true, conn, opts)();
         } catch (cerr) {
@@ -234,7 +219,7 @@ module.exports = class OracleDialect {
   }
 
   /**
-   * Gets the currently open connection or a new connection when no transaction is in progress
+   * Gets a new connection from the pool
    * @protected
    * @param {Object} pool The connection pool
    * @param {OracleExecOptions} [opts] The execution options
@@ -242,15 +227,10 @@ module.exports = class OracleDialect {
    */
   async getConnection(pool, opts) {
     const dlt = internal(this);
-    const txId = opts && opts.transactionId;
-    let conn = txId ? dlt.at.connections.get(txId) : null;
-    if (!conn) {
-      const hasDrvrOpts = opts && !!opts.driverOptions;
-      const poolAttrs = (hasDrvrOpts && opts.driverOptions.pool) || {};
-      poolAttrs.poolAlias = dlt.at.pool.orcaleConf.poolAlias;
-      conn = await pool.getConnection(poolAttrs);
-    }
-    return conn;
+    const hasDrvrOpts = opts && !!opts.driverOptions;
+    const poolAttrs = (hasDrvrOpts && opts.driverOptions.pool) || {};
+    poolAttrs.poolAlias = dlt.at.pool.orcaleConf.poolAlias;
+    return pool.getConnection(poolAttrs);
   }
 
   /**
@@ -260,28 +240,35 @@ module.exports = class OracleDialect {
   async close() {
     const dlt = internal(this);
     try {
-      const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
+      const pool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
       if (dlt.at.logger) {
-        dlt.at.logger(`Oracle: Closing connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
+        dlt.at.logger(`sqler-oracle: Closing connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
       }
       if (pool) await pool.close();
-      dlt.at.connections.clear();
-      dlt.at.state.connection.count = 0;
-      dlt.at.state.connection.inUse = 0;
+      dlt.at.transactions.clear();
+      dlt.at.state.pending = 0;
       return dlt.at.state.pending;
     } catch (err) {
       if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Oracle: Failed to close connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`, err);
+        dlt.at.errorLogger(`sqler-oracle: Failed to close connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`, err);
       }
       throw err;
     }
   }
 
   /**
-   * @returns {Manager~State} The state
+   * @returns {SQLERState} The state
    */
   get state() {
-    return JSON.parse(JSON.stringify(internal(this).at.state));
+    const dlt = internal(this);
+    const pooled = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+    return {
+      connection: {
+        count: pooled.connectionsOpen || 0,
+        inUse: pooled.connectionsInUse || 0
+      },
+      pending: dlt.at.state.pending
+    };
   }
 
   /**
@@ -289,7 +276,7 @@ module.exports = class OracleDialect {
    * @returns {Object} The oracledb driver module
    */
   get driver() {
-    return internal(this).at.oracledb;
+    return internal(this).at.driver;
   }
 };
 
@@ -299,43 +286,39 @@ module.exports = class OracleDialect {
  * @param {Object} dlt The internal Oracle object instance
  * @param {String} name The name of the function that will be called on the connection
  * @param {Boolean} [reset] Truthy to reset the pending connection and transaction count when the operation completes successfully
- * @param {Object} [conn] The connection (ommit to get a connection from the pool)
- * @param {Manager~ExecOptions} [opts] The {@link Manager~ExecOptions}
+ * @param {(PGTransactionObject | Object)} txoOrConn Either the transaction object or the connection itself
+ * @param {SQLERExecOptions} [opts] The {@link SQLERExecOptions}
  * @returns {Function} A no-arguement `async` function that returns the number or pending transactions
  */
-function operation(dlt, name, reset, conn, opts) {
+function operation(dlt, name, reset, txoOrConn, opts) {
   return async () => {
-    let error;
+    /** @type {OracleTransactionObject} */
+    const txo = opts.transactionId && txoOrConn.tx ? txoOrConn : null;
+    const conn = txo ? txo.conn : txoOrConn;
+    let ierr;
     try {
-      if (!conn) {
-        const pool = dlt.at.oracledb.getPool(dlt.at.pool.orcaleConf.poolAlias);
-        const hasDrvrOpts = opts && !!opts.driverOptions;
-        const poolAttrs = (hasDrvrOpts && opts.driverOptions.pool) || {};
-        poolAttrs.poolAlias = dlt.at.pool.orcaleConf.poolAlias;
-        conn = await pool.getConnection(poolAttrs);
+      if (dlt.at.logger) {
+        dlt.at.logger(`sqler-oracle: Performing ${name} on connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
       }
-      if (conn && dlt.at.logger) {
-        dlt.at.logger(`Oracle: Performing ${name} on connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
-      }
-      if (conn) await conn[name]();
+      await conn[name]();
       if (reset) {
-        if (opts && opts.transactionId) dlt.at.connections.delete(opts.transactionId);
+        if (txo) dlt.at.transactions.delete(txo.tx.id);
         dlt.at.state.pending = 0;
       }
     } catch (err) {
-      error = err;
+      ierr = err;
       if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Oracle: Failed to ${name} ${dlt.at.state.pending} transaction(s) with options: ${
-          opts ? JSON.stringify(opts) : 'N/A'}`, error);
+        dlt.at.errorLogger(`sqler-oracle: Failed to ${name} ${dlt.at.state.pending} transaction(s) with options: ${
+          opts ? JSON.stringify(opts) : 'N/A'}`, ierr);
       }
-      throw error;
+      throw ierr;
     } finally {
-      if (conn && name !== 'end' && name !== 'release') {
+      if (name !== 'end' && name !== 'release') {
         try {
           await conn.release();
         } catch (cerr) {
-          if (error) {
-            error.closeError = cerr;
+          if (ierr) {
+            ierr.releaseError = cerr;
           }
         }
       }
@@ -355,3 +338,48 @@ let internal = function(object) {
     this: object
   };
 };
+
+/**
+ * Oracle specific extension of the {@link SQLERConnectionOptions} from the [`sqler`](https://ugate.github.io/sqler/) module.
+ * @typedef {SQLERConnectionOptions} OracleConnectionOptions
+ * @property {Object} [driverOptions] The `oracledb` module specific options.
+ * @property {String} [driverOptions.sid] An alternative to the default `service` option that indicates that a unique Oracle System ID for the DB will be used instead.
+ * @property {Object} [driverOptions.global] An object that will contain properties set on the global `oracledb` module class.
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
+ * accordingly.
+ * For example `driverOptions.global.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `oracledb.someProp = oracledb.ORACLEDB_CONSTANT`.
+ * @property {Object} [driverOptions.pool] The pool `conf` options that will be passed into `oracledb.createPool({ conf })`.
+ * __Using any of the generic `pool.someOption` will override the `conf` options set on `driverOptions.pool`.__
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
+ * accordingly.
+ * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
+ * @property {Boolean} [driverOptions.pingOnInit=true] A truthy flag that indicates if a _ping_ will be performed after the connection pool is created when
+ * {@link OracleDialect.init} is called.
+ */
+
+/**
+ * Oracle specific extension of the {@link SQLERExecOptions} from the [`sqler`](https://ugate.github.io/sqler/) module. When a property of `binds` contains
+ * an object it will be _interpolated_ for property values on the `oracledb` module.
+ * For example, `binds.name = { dir: '${BIND_OUT}', type: '${STRING}', maxSize: 40 }` will be interpolated as
+ * `binds.name = { dir: oracledb.BIND_OUT, type: oracledb.STRING, maxSize: 40 }`.
+ * @typedef {SQLERExecOptions} OracleExecOptions
+ * @property {Object} [driverOptions] The `oracledb` module specific options.
+ * @property {Object} [driverOptions.pool] The pool attribute options passed into `oracledbPool.getConnection()`.
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
+ * accordingly.
+ * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
+ * @property {Object} [driverOptions.exec] The execution options passed into `oracledbConnection.execute()`.
+ * __NOTE: `driverOptions.autoCommit` is ignored in favor of the universal `autoCommit` set directly on the {@link SQLERExecOptions}.__
+ * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
+ * accordingly.
+ * For example `driverOptions.exec.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `oracledbExecOpts.someProp = oracledb.ORACLEDB_CONSTANT`.
+ */
+
+/**
+ * Transactions are wrapped in a parent transaction object so private properties can be added (e.g. prepared statements)
+ * @typedef {Object} OracleTransactionObject
+ * @property {SQLERTransaction} tx The transaction
+ * @property {Object} conn The connection
+ * @property {Map} unprepares Map of prepared statement names (key) and no-argument _async_ functions that will be called as a pre-operation call prior to
+ * `commit` or `rollback` (value)
+ */
