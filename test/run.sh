@@ -8,8 +8,8 @@
 attempt=0
 health1=checking
 health2=checking
-# sleep for 2 sec * 300 attempts = 10 minutes max wait time
-while [ $attempt -le 299 ]; do
+# (450 attempts * 2 seconds sleep) / 60 = 15 minutes max wait time
+while [ $attempt -le 449 ]; do
   attempt=$(( $attempt + 1 ))
   echo "Waiting for docker healthcheck on services $1 ($health1) and $2 ($health2): attempt: $attempt..."
   if [[ health1 != "healthy" ]]; then

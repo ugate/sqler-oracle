@@ -84,7 +84,12 @@ module.exports = class OracleDialect {
     dlt.at.pool.orcaleConf.stmtCacheSize = (numSql || 1) * 3;
     let oraPool;
     try {
-      oraPool = await dlt.at.driver.createPool(dlt.at.pool.orcaleConf);
+      try {
+        oraPool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+      } catch(err) {
+        // consume error since the pool might not be created yet
+      }
+      oraPool = oraPool || (await dlt.at.driver.createPool(dlt.at.pool.orcaleConf));
       if (dlt.at.logger) {
         dlt.at.logger(`sqler-oracle: ${dlt.at.connectionType} connection pool "${oraPool.poolAlias}" created with poolPingInterval=${oraPool.poolPingInterval} ` +
           `stmtCacheSize=${oraPool.stmtCacheSize} (${numSql} SQL files) poolTimeout=${oraPool.poolTimeout} poolIncrement=${oraPool.poolIncrement} ` +
@@ -240,7 +245,11 @@ module.exports = class OracleDialect {
   async close() {
     const dlt = internal(this);
     try {
-      const pool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+      let pool;
+      try {
+        pool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+      } catch (err) {
+      }
       if (dlt.at.logger) {
         dlt.at.logger(`sqler-oracle: Closing connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
       }
@@ -261,7 +270,12 @@ module.exports = class OracleDialect {
    */
   get state() {
     const dlt = internal(this);
-    const pooled = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+    let pooled;
+    try {
+      pooled = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+    } catch (err) {
+      pooled = {};
+    }
     return {
       connection: {
         count: pooled.connectionsOpen || 0,

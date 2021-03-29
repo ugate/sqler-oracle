@@ -24,9 +24,18 @@ docker-compose build sqler_oracle_dialect
 docker-compose up --force-recreate
 ```
 
-From a different command prompt, run the test suite using the following commands:
+### Running Tests
+From a different command prompt, run the test suite using the following command:
 ```sh
 docker exec -i sqler_oracle_dialect bash "npm test"
+```
+
+### Debugging Tests
+From a different command prompt, debug a test function using the following commands:
+```sh
+docker exec -it sqler_oracle_dialect bash
+node --inspect-brk=0.0.0.0 test/lib/main.js someTestFunction -NODE_ENV=test
+// connections can be established using the normal
 ```
 
 ### Generating Docs
