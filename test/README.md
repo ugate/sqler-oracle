@@ -35,7 +35,7 @@ From a different command prompt, debug a test function using the following comma
 ```sh
 docker exec -it sqler_oracle_dialect bash
 node --inspect-brk=0.0.0.0 test/lib/main.js someTestFunction -NODE_ENV=test
-// connections can be established using the normal
+// connections can be established using the normal node debug port `9229`
 ```
 
 ### Generating Docs

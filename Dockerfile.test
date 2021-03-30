@@ -2,6 +2,7 @@ FROM node:14
 
 RUN apt-get update && \
     apt-get install -y vim && \
+    apt-get install -y nano && \
     # install C compiler for native node deps
     apt-get install -y software-properties-common build-essential && \
     # install Oracle Instant Client (required by driver)

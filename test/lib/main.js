@@ -232,20 +232,6 @@ class Tester {
     });
   }
 
-  static async preparedStatementNameThrow() {
-    const date = new Date();
-    return test.mgr.db[test.vendor].create.table1.rows({
-      binds: {
-        id: 500, name: 'SHOULD NEVER GET INSERTED (from bindsInvalidThrow)', created: date, updated: date
-      },
-      driverOptions: {
-        query: {
-          name: 'SOME_PREPARED_STATEMENT_NAME' // should fail since PS names use meta
-        }
-      }
-    });
-  }
-
   static async transactionLeaveOpen() {
     return test.mgr.db[test.vendor].beginTransaction();
   }
@@ -399,8 +385,7 @@ class Tester {
     expect(state.result[test.vendor], `state.result.${test.vendor}`).to.be.object();
     expect(state.result[test.vendor].pending, `state.result.${test.vendor}.pending`).to.equal(0);
     expect(state.result[test.vendor].connection, `state.result.${test.vendor}.connection`).to.be.object();
-    // there is no min pool count (should have 1 connection from init), need to ensure that the max is not exceeded?
-    expect(state.result[test.vendor].connection.count, `state.result.${test.vendor}.connection.count`).to.equal(1);
+    expect(state.result[test.vendor].connection.count, `state.result.${test.vendor}.connection.count`).to.equal(poolCount);
     expect(state.result[test.vendor].connection.inUse, `state.result.${test.vendor}.connection.inUse`).to.equal(0);
 
     return mgr.close();
