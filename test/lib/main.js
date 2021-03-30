@@ -313,13 +313,6 @@ class Tester {
     return mgr.close();
   }
 
-  static async driverOptionsNoneThrow() {
-    const conf = getConf({ driverOptions: null });
-    const mgr = new Manager(conf, test.cache, test.mgrLogit);
-    await mgr.init();
-    return mgr.close();
-  }
-
   static async driverOptionsPoolConnNone() {
     const conf = getConf({
       driverOptions: (prop, conn) => {

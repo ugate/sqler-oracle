@@ -35,19 +35,20 @@ module.exports = class OracleDialect {
     dlt.at.driver.connectionClass = dlt.at.driver.connectionClass || `SqlerOracleGen${Math.floor(Math.random() * 10000)}`;
 
     const poolOpts = connConf.pool || {};
-    poolOpts.alias = poolOpts.alias || `sqlerOracleGen${Math.floor(Math.random() * 10000)}`;
+    const alias = poolOpts.alias || `sqlerOracleGen${Math.floor(Math.random() * 10000)}`;
     dlt.at.errorLogger = errorLogger;
     dlt.at.logger = logger;
     dlt.at.debug = debug;
     dlt.at.pool = {
+      alias,
       conf: poolOpts,
-      orcaleConf: hasDrvrOpts && connConf.driverOptions.pool ? dlt.at.track.interpolate({}, connConf.driverOptions.pool, dlt.at.driver) : {}
+      oracleConf: hasDrvrOpts && connConf.driverOptions.pool ? dlt.at.track.interpolate({}, connConf.driverOptions.pool, dlt.at.driver) : {}
     };
     dlt.at.pingOnInit = hasDrvrOpts && connConf.driverOptions.hasOwnProperty('pingOnInit') ? !!connConf.driverOptions.pingOnInit : true;
     dlt.at.connConf = connConf;
 
-    dlt.at.pool.orcaleConf.user = priv.username;
-    dlt.at.pool.orcaleConf.password = priv.password;
+    dlt.at.pool.oracleConf.user = priv.username;
+    dlt.at.pool.oracleConf.password = priv.password;
 
     const host = connConf.host || priv.host, port = connConf.port || priv.port || 1521, protocol = connConf.protocol || priv.protocol || 'TCP';
     if (!host) throw new Error(`sqler-oracle: Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
@@ -55,21 +56,21 @@ module.exports = class OracleDialect {
     if (hasDrvrOpts && connConf.driverOptions.sid) {
       //process.env.TNS_ADMIN = priv.privatePath;
       //dlt.at.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
-      dlt.at.pool.orcaleConf.connectString = `(DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol})(HOST = ${host})(PORT = ${port}))` +
+      dlt.at.pool.oracleConf.connectString = `(DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol})(HOST = ${host})(PORT = ${port}))` +
       `(CONNECT_DATA = (SERVER = POOLED)(SID = ${connConf.driverOptions.sid})))`;
       dlt.at.connectionType = 'SID';
       if (track.tnsCnt) track.tnsCnt++;
       else track.tnsCnt = 1;
     } else if (connConf.service) {
-      dlt.at.pool.orcaleConf.connectString = `${host}/${connConf.service}:${port}`;
+      dlt.at.pool.oracleConf.connectString = `${host}/${connConf.service}:${port}`;
       dlt.at.connectionType = 'Service';
     } else throw new Error(`sqler-oracle: Missing ${connConf.dialect} "service" or "sid" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
-    dlt.at.pool.orcaleConf.poolMin = poolOpts.min;
-    dlt.at.pool.orcaleConf.poolMax = poolOpts.max;
-    dlt.at.pool.orcaleConf.poolTimeout = poolOpts.idle;
-    dlt.at.pool.orcaleConf.poolIncrement = poolOpts.increment;
-    dlt.at.pool.orcaleConf.queueTimeout = poolOpts.timeout;
-    dlt.at.pool.orcaleConf.poolAlias = poolOpts.alias;
+    dlt.at.pool.oracleConf.poolMin = poolOpts.min;
+    dlt.at.pool.oracleConf.poolMax = poolOpts.max;
+    dlt.at.pool.oracleConf.poolTimeout = poolOpts.idle;
+    dlt.at.pool.oracleConf.poolIncrement = poolOpts.increment;
+    dlt.at.pool.oracleConf.queueTimeout = poolOpts.timeout;
+    dlt.at.pool.oracleConf.poolAlias = alias;
   }
 
   /**
@@ -81,15 +82,15 @@ module.exports = class OracleDialect {
     const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
     // there is no prepare/unprepare since oracle uses statement caching: https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching
     // statement cache should account for the number of prepared functions/files by a factor of 3x to accomodate up to 3x fragments for each SQL file
-    dlt.at.pool.orcaleConf.stmtCacheSize = (numSql || 1) * 3;
+    dlt.at.pool.oracleConf.stmtCacheSize = (numSql || 1) * 3;
     let oraPool;
     try {
       try {
-        oraPool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+        oraPool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
       } catch(err) {
         // consume error since the pool might not be created yet
       }
-      oraPool = oraPool || (await dlt.at.driver.createPool(dlt.at.pool.orcaleConf));
+      oraPool = oraPool || (await dlt.at.driver.createPool(dlt.at.pool.oracleConf));
       if (dlt.at.logger) {
         dlt.at.logger(`sqler-oracle: ${dlt.at.connectionType} connection pool "${oraPool.poolAlias}" created with poolPingInterval=${oraPool.poolPingInterval} ` +
           `stmtCacheSize=${oraPool.stmtCacheSize} (${numSql} SQL files) poolTimeout=${oraPool.poolTimeout} poolIncrement=${oraPool.poolIncrement} ` +
@@ -112,7 +113,7 @@ module.exports = class OracleDialect {
     } catch (err) {
       const msg = `sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`;
       if (dlt.at.errorLogger) dlt.at.errorLogger(`${msg} ${JSON.stringify(err, null, ' ')}`);
-      const pconf = Object.assign({}, dlt.at.pool.orcaleConf);
+      const pconf = Object.assign({}, dlt.at.pool.oracleConf);
       pconf.password = '***'; // mask sensitive data
       err.message = `${err.message}\n${msg} for ${JSON.stringify(pconf, null, ' ')}`;
       throw err;
@@ -127,7 +128,7 @@ module.exports = class OracleDialect {
   async beginTransaction(txId) {
     const dlt = internal(this);
     if (dlt.at.logger) {
-      dlt.at.logger(`sqler-oracle: Beginning transaction ${txId} on connection pool "${dlt.at.pool.orcaleConf.poolAlias}"`);
+      dlt.at.logger(`sqler-oracle: Beginning transaction ${txId} on connection pool "${dlt.at.pool.oracleConf.poolAlias}"`);
     }
     /** @type {SQLERTransaction} */
     const tx = {
@@ -138,7 +139,7 @@ module.exports = class OracleDialect {
         pending: 0
       })
     };
-    const pool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+    const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
     /** @type {OracleTransactionObject} */
     const txo = { tx, conn: await dlt.this.getConnection(pool, dlt.at.connConf) };
     const opts = { transactionId: tx.id };
@@ -160,7 +161,7 @@ module.exports = class OracleDialect {
    */
   async exec(sql, opts, frags, meta, errorOpts) {
     const dlt = internal(this);
-    const pool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+    const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
     /** @type {OracleTransactionObject} */
     const txo = opts.transactionId ? dlt.at.transactions.get(opts.transactionId) : null;
     let conn, bndp = {}, dopts, rslts, xopts, error;
@@ -234,7 +235,7 @@ module.exports = class OracleDialect {
     const dlt = internal(this);
     const hasDrvrOpts = opts && !!opts.driverOptions;
     const poolAttrs = (hasDrvrOpts && opts.driverOptions.pool) || {};
-    poolAttrs.poolAlias = dlt.at.pool.orcaleConf.poolAlias;
+    poolAttrs.poolAlias = dlt.at.pool.oracleConf.poolAlias;
     return pool.getConnection(poolAttrs);
   }
 
@@ -247,11 +248,11 @@ module.exports = class OracleDialect {
     try {
       let pool;
       try {
-        pool = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+        pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
       } catch (err) {
       }
       if (dlt.at.logger) {
-        dlt.at.logger(`sqler-oracle: Closing connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
+        dlt.at.logger(`sqler-oracle: Closing connection pool "${dlt.at.pool.oracleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
       }
       if (pool) await pool.close();
       dlt.at.transactions.clear();
@@ -259,7 +260,7 @@ module.exports = class OracleDialect {
       return dlt.at.state.pending;
     } catch (err) {
       if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`sqler-oracle: Failed to close connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`, err);
+        dlt.at.errorLogger(`sqler-oracle: Failed to close connection pool "${dlt.at.pool.oracleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`, err);
       }
       throw err;
     }
@@ -272,7 +273,7 @@ module.exports = class OracleDialect {
     const dlt = internal(this);
     let pooled;
     try {
-      pooled = dlt.at.driver.getPool(dlt.at.pool.orcaleConf.poolAlias);
+      pooled = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
     } catch (err) {
       pooled = {};
     }
@@ -312,7 +313,7 @@ function operation(dlt, name, reset, txoOrConn, opts) {
     let ierr;
     try {
       if (dlt.at.logger) {
-        dlt.at.logger(`sqler-oracle: Performing ${name} on connection pool "${dlt.at.pool.orcaleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
+        dlt.at.logger(`sqler-oracle: Performing ${name} on connection pool "${dlt.at.pool.oracleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
       }
       await conn[name]();
       if (reset) {

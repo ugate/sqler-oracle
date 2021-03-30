@@ -36,7 +36,6 @@ lab.experiment(plan, () => {
   lab.test(`${plan}: Connection Failure`, { timeout: TEST_LONG_TKO }, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'init throw' }, Tester.initThrow));
   lab.test(`${plan}: No Pool`, { timeout: TEST_TKO }, Tester.poolNone);
   lab.test(`${plan}: Pool Property Defaults`, { timeout: TEST_TKO }, Tester.poolPropSwap);
-  lab.test(`${plan}: Missing Driver Options`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'no driver options throw' }, Tester.driverOptionsNoneThrow));
   lab.test(`${plan}: Driver Options No Pool/Connection`, { timeout: TEST_TKO }, Tester.driverOptionsPoolConnNone);
   lab.test(`${plan}: Driver Options Pool or Connection`, { timeout: TEST_TKO }, Tester.driverOptionsPoolConnSwap);
   lab.test(`${plan}: Driver Options Client`, { timeout: TEST_TKO }, Tester.driverOptionsClient);
