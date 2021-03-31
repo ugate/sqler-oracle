@@ -53,17 +53,19 @@ module.exports = class OracleDialect {
     const host = connConf.host || priv.host, port = connConf.port || priv.port || 1521, protocol = connConf.protocol || priv.protocol || 'TCP';
     if (!host) throw new Error(`sqler-oracle: Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
 
-    if (hasDrvrOpts && connConf.driverOptions.sid) {
-      //process.env.TNS_ADMIN = priv.privatePath;
-      //dlt.at.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
-      dlt.at.pool.oracleConf.connectString = `(DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol})(HOST = ${host})(PORT = ${port}))` +
-      `(CONNECT_DATA = (SERVER = POOLED)(SID = ${connConf.driverOptions.sid})))`;
-      dlt.at.connectionType = 'SID';
-      if (track.tnsCnt) track.tnsCnt++;
-      else track.tnsCnt = 1;
-    } else if (connConf.service) {
-      dlt.at.pool.oracleConf.connectString = `${host}/${connConf.service}:${port}`;
-      dlt.at.connectionType = 'Service';
+    if (connConf.service) {
+      if (hasDrvrOpts && connConf.driverOptions.useTNS) {
+        //process.env.TNS_ADMIN = priv.privatePath;
+        //dlt.at.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
+        dlt.at.pool.oracleConf.connectString = `(DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol})(HOST = ${host})(PORT = ${port}))` +
+        `(CONNECT_DATA = (SERVER = POOLED)(SERVICE = ${connConf.service})))`;
+        dlt.at.connectionType = 'TNS SERVICE';
+        if (track.tnsCnt) track.tnsCnt++;
+        else track.tnsCnt = 1;
+      } else {
+        dlt.at.pool.oracleConf.connectString = `${host}/${connConf.service}:${port}`;
+        dlt.at.connectionType = 'SERVICE';
+      }
     } else throw new Error(`sqler-oracle: Missing ${connConf.dialect} "service" or "sid" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
     dlt.at.pool.oracleConf.poolMin = poolOpts.min;
     dlt.at.pool.oracleConf.poolMax = poolOpts.max;
@@ -358,7 +360,6 @@ let internal = function(object) {
  * Oracle specific extension of the {@link SQLERConnectionOptions} from the [`sqler`](https://ugate.github.io/sqler/) module.
  * @typedef {SQLERConnectionOptions} OracleConnectionOptions
  * @property {Object} [driverOptions] The `oracledb` module specific options.
- * @property {String} [driverOptions.sid] An alternative to the default `service` option that indicates that a unique Oracle System ID for the DB will be used instead.
  * @property {Object} [driverOptions.global] An object that will contain properties set on the global `oracledb` module class.
  * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
  * accordingly.
@@ -370,6 +371,7 @@ let internal = function(object) {
  * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
  * @property {Boolean} [driverOptions.pingOnInit=true] A truthy flag that indicates if a _ping_ will be performed after the connection pool is created when
  * {@link OracleDialect.init} is called.
+ * @property {Boolean} [driverOptions.useTNS] Truthy to build a TNS `sql*net` connection string
  */
 
 /**

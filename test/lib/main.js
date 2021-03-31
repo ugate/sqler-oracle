@@ -232,10 +232,6 @@ class Tester {
     });
   }
 
-  static async transactionLeaveOpen() {
-    return test.mgr.db[test.vendor].beginTransaction();
-  }
-
   static async transactionRollback() {
     const tx = await test.mgr.db[test.vendor].beginTransaction();
     const date = new Date();
@@ -353,10 +349,10 @@ class Tester {
   }
 
   static async multipleConnections() {
-    const conf = getConf();
-    const conn = JSON.parse(JSON.stringify(conf.db.connections[0]));
-    conn.name += '2';
-    conf.db.connections.push(conn);
+    const conf = getConf({} /*pass obj so conf is copy*/);
+    const conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
+    conn2.name += '2';
+    conf.db.connections.push(conn2);
     const mgr = new Manager(conf, test.cache, test.mgrLogit);
     await mgr.init();
     return mgr.close();
@@ -393,30 +389,30 @@ class Tester {
 
   //====================== Vendor Specific ======================
 
-  static async driverOptionsSid() {
-    return expectSid(getConf());
+  static async driverOptionsTNS() {
+    return expectTNS(getConf({} /*pass obj so conf is copy*/));
   }
 
-  static async driverOptionsSidWithPing() {
-    return expectSid(getConf(), { pingOnInit: true });
+  static async driverOptionsPingTNS() {
+    return expectTNS(getConf({} /*pass obj so conf is copy*/), { pingOnInit: true });
   }
 
-  static async driverOptionsSidDefaults() {
-    const conf = getConf(), conn = conf.db.connections[0];
-    conf.univ.db.testId.port = conn.port = false;
-    conf.univ.db.testId.protocol = conn.protocol = false;
-    return expectSid(conf);
+  static async driverOptionsDefaultsTNS() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    conf.univ.db[conn.dialect].port = conn.port = false;
+    conf.univ.db[conn.dialect].protocol = conn.protocol = false;
+    return expectTNS(conf);
   }
 
-  static async driverOptionsSidMultiple() {
-    const conf = getConf(), conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
+  static async driverOptionsMultipleTNS() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
     conn2.name += '2';
     conf.db.connections.push(conn2);
-    return expectSid(conf);
+    return expectTNS(conf);
   }
 
   static async driverOptionsPool() {
-    const conf = getConf(), conn = conf.db.connections[0];
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
     conn.driverOptions = conn.driverOptions || {};
     conn.driverOptions.pool = conn.driverOptions.pool || {};
     // test constant pool min from oracledb.poolMin
@@ -426,6 +422,20 @@ class Tester {
     conn.driverOptions.pool.poolIncrement = 2;
     conn.driverOptions.pool.queueTimeout = 5000;
     conn.driverOptions.pool.poolAlias = 'testDriverOptionsPool';
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async confDriverOptionsGlobalNonOwnProps() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    conn.driverOptions.pool = false;
+    const TestGlobal = class {};
+    TestGlobal.prototype.skip = 'Skip adding this global property';
+    conn.driverOptions.global = new TestGlobal();
+    conn.driverOptions.global.fakeObject = {};
+    conn.driverOptions.global.fakeConstant = '${FAKE_CONSTANT_NAME}';
+    conn.driverOptions.global.autoCommit = false;
     const mgr = new Manager(conf, test.cache, test.mgrLogit);
     await mgr.init();
     return mgr.close();
@@ -520,9 +530,9 @@ if (!Labrat.usingTestRunner()) {
  * Defaults to the `service` set on the connection.
  * @param {Boolean} [testOpts.pingOnInit] An alternative flag for `conf.db.connections[].driverOptions.pingOnInit`
  */
-async function expectSid(conf, testOpts) {
+async function expectTNS(conf, testOpts) {
   for (let conn of conf.db.connections) {
-    conn.driverOptions.sid = (testOpts && testOpts.sid) || conn.service;
+    conn.driverOptions.useTNS = testOpts && testOpts.useTNS;
     // don't ping the connection pool since it may have not been setup
     conn.driverOptions.pingOnInit = (testOpts && testOpts.hasOwnProperty('pingOnInit')) ? testOpts.pingOnInit : false;
   }

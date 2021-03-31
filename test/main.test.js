@@ -47,15 +47,14 @@ lab.experiment(plan, () => {
   //lab.test(`${plan}: Execution Driver Options and Prepared Statement (Alternatives)`, { timeout: TEST_TKO }, Tester.execDriverOptionsAlt);
   lab.test(`${plan}: Invalid SQL`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'invalid SQL throw' }, Tester.sqlInvalidThrow));
   lab.test(`${plan}: Invalid bind parameter`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'invalid bind param throw' }, Tester.bindsInvalidThrow));
-  lab.test(`${plan}: Leave transaction open`, { timeout: TEST_TKO }, Tester.transactionLeaveOpen);
   lab.test(`${plan}: Rollback transaction`, { timeout: TEST_TKO }, Tester.transactionRollback);
 
   // vendor specific tests
 
-  lab.test(`${plan}: Driver Options SID`, { timeout: TEST_TKO }, Tester.driverOptionsSid);
-  lab.test(`${plan}: Driver Options SID Ping (Error)`, { timeout: TEST_LONG_TKO }, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'SID ping' }, Tester.driverOptionsSidWithPing));
-  lab.test(`${plan}: Driver Options SID (defaults)`, { timeout: TEST_TKO }, Tester.driverOptionsSidDefaults);
-  lab.test(`${plan}: Driver Options SID (multiple)`, { timeout: TEST_TKO }, Tester.driverOptionsSidMultiple);
+  lab.test(`${plan}: Driver Options TNS`, { timeout: TEST_TKO }, Tester.driverOptionsTNS);
+  lab.test(`${plan}: Driver Options TNS Ping`, { timeout: TEST_TKO }, Tester.driverOptionsPingTNS);
+  lab.test(`${plan}: Driver Options SID (defaults)`, { timeout: TEST_TKO }, Tester.driverOptionsDefaultsTNS);
+  lab.test(`${plan}: Driver Options SID (multiple)`, { timeout: TEST_TKO }, Tester.driverOptionsMultipleTNS);
   lab.test(`${plan}: Driver Options Pool`, { timeout: TEST_TKO }, Tester.driverOptionsPool);
-
+  lab.test(`${plan}: Driver Options Global (non-own props)`, { timeout: TEST_TKO }, Tester.confDriverOptionsGlobalNonOwnProps);
 });
