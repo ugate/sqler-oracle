@@ -49,24 +49,28 @@ module.exports = class OracleDialect {
 
     dlt.at.pool.oracleConf.user = priv.username;
     dlt.at.pool.oracleConf.password = priv.password;
-
-    const host = connConf.host || priv.host, port = connConf.port || priv.port || 1521, protocol = connConf.protocol || priv.protocol || 'TCP';
-    if (!host) throw new Error(`sqler-oracle: Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
+  
+    const url = {
+      host: connConf.host, // host will be defaulted to priv.host by sqler
+      port: connConf.port || priv.port || 1521,
+      protocol: connConf.protocol || priv.protocol || 'TCP'
+    };
+    if (!url.host) throw new Error(`sqler-oracle: Missing ${connConf.dialect} "host" for conection ${connConf.id}/${connConf.name} in private configuration options or connection configuration options`);
 
     if (connConf.service) {
       if (hasDrvrOpts && connConf.driverOptions.useTNS) {
         //process.env.TNS_ADMIN = priv.privatePath;
         //dlt.at.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
-        dlt.at.pool.oracleConf.connectString = `(DESCRIPTION = (ADDRESS = (PROTOCOL = ${protocol})(HOST = ${host})(PORT = ${port}))` +
+        dlt.at.pool.oracleConf.connectString = `(DESCRIPTION = (ADDRESS = (PROTOCOL = ${url.protocol})(HOST = ${url.host})(PORT = ${url.port}))` +
         `(CONNECT_DATA = (SERVER = POOLED)(SERVICE = ${connConf.service})))`;
-        dlt.at.connectionType = 'TNS SERVICE';
+        dlt.at.connectionType = 'TNS_SERVICE';
         if (track.tnsCnt) track.tnsCnt++;
         else track.tnsCnt = 1;
       } else {
-        dlt.at.pool.oracleConf.connectString = `${host}/${connConf.service}:${port}`;
+        dlt.at.pool.oracleConf.connectString = `${url.host}/${connConf.service}:${url.port}`;
         dlt.at.connectionType = 'SERVICE';
       }
-    } else throw new Error(`sqler-oracle: Missing ${connConf.dialect} "service" or "sid" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
+    } else throw new Error(`sqler-oracle: Missing ${connConf.dialect} "service" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
     dlt.at.pool.oracleConf.poolMin = poolOpts.min;
     dlt.at.pool.oracleConf.poolMax = poolOpts.max;
     dlt.at.pool.oracleConf.poolTimeout = poolOpts.idle;
@@ -84,7 +88,7 @@ module.exports = class OracleDialect {
     const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
     // there is no prepare/unprepare since oracle uses statement caching: https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching
     // statement cache should account for the number of prepared functions/files by a factor of 3x to accomodate up to 3x fragments for each SQL file
-    dlt.at.pool.oracleConf.stmtCacheSize = (numSql || 1) * 3;
+    dlt.at.pool.oracleConf.stmtCacheSize = (dlt.at.driverOptions && dlt.at.driverOptions.stmtCacheSize) || ((numSql || 1) * 3);
     let oraPool;
     try {
       try {
@@ -372,6 +376,7 @@ let internal = function(object) {
  * @property {Boolean} [driverOptions.pingOnInit=true] A truthy flag that indicates if a _ping_ will be performed after the connection pool is created when
  * {@link OracleDialect.init} is called.
  * @property {Boolean} [driverOptions.useTNS] Truthy to build a TNS `sql*net` connection string
+ * @property {Integer} [driverOptions.stmtCacheSize=numberOfSQLFiles * 3] The statement size that `oracledb` uses
  */
 
 /**

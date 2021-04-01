@@ -57,4 +57,10 @@ lab.experiment(plan, () => {
   lab.test(`${plan}: Driver Options SID (multiple)`, { timeout: TEST_TKO }, Tester.driverOptionsMultipleTNS);
   lab.test(`${plan}: Driver Options Pool`, { timeout: TEST_TKO }, Tester.driverOptionsPool);
   lab.test(`${plan}: Driver Options Global (non-own props)`, { timeout: TEST_TKO }, Tester.confDriverOptionsGlobalNonOwnProps);
+  lab.test(`${plan}: Driver Options None`, { timeout: TEST_TKO }, Tester.confDriverOptionsNone);
+  lab.test(`${plan}: Driver Options Statement Cache Size (custom)`, { timeout: TEST_TKO }, Tester.confDriverOptionsStmtCacheSize);
+  lab.test(`${plan}: Connection/Private Port/Protocol Defaults`, { timeout: TEST_TKO }, Tester.confPortProtocolDefaults);
+  lab.test(`${plan}: Connection/Private Port/Protocol None`, { timeout: TEST_TKO }, Tester.confPortProtocolNone);
+  lab.test(`${plan}: Connection/Private Host Missing`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'no host throw' }, Tester.confHostNoneThrow));
+  lab.test(`${plan}: Connection Service Missing`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'no service throw' }, Tester.confNoServiceThrow));
 });

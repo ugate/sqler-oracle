@@ -24,7 +24,9 @@ const test = {
   rowCount: 2,
   mgrLogit: !!LOGGER.info,
   vendor: 'oracle',
+  defaultHost: 'sqler_oracle',
   defaultPort: 1521,
+  defaultProtocol: 'TCP',
   conf: {}
 };
 
@@ -331,11 +333,15 @@ class Tester {
 
   static async hostPortSwap() {
     // need to set a conf override to prevent overwritting of privateConf properties for other tests
-    const conf = getConf({ pool: null });
+    const conf = getConf({ pool: null });console.log('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@', conf.univ.db[test.vendor], conf.db.connections[0])
     if (conf.univ.db[test.vendor].host) {
       //delete conf.univ.db[test.vendor].host;
-      conf.univ.db[test.vendor].host = `sqler_${test.vendor}_database`; // need to use alias hostname from docker "links"
+      conf.univ.db[test.vendor].host = `${conf.univ.db[test.vendor].host}_database`; // need to use alias hostname from docker "links"
+      for (let conn of conf.db.connections) {
+        conn.host = conf.univ.db[test.vendor].host;
+      }
     } else {
+      const realConf = getConf();
       conf.univ.db[test.vendor].host = realConf.univ.db[test.vendor].host;
     }
     if (conf.univ.db[test.vendor].hasOwnProperty('port')) {
@@ -429,6 +435,7 @@ class Tester {
 
   static async confDriverOptionsGlobalNonOwnProps() {
     const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    conn.driverOptions = conn.driverOptions || {};
     conn.driverOptions.pool = false;
     const TestGlobal = class {};
     TestGlobal.prototype.skip = 'Skip adding this global property';
@@ -439,6 +446,57 @@ class Tester {
     const mgr = new Manager(conf, test.cache, test.mgrLogit);
     await mgr.init();
     return mgr.close();
+  }
+
+  static async confDriverOptionsNone() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    delete conn.driverOptions;
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async confDriverOptionsStmtCacheSize() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    conn.driverOptions = conn.driverOptions || {};
+    conn.driverOptions.stmtCacheSize = 100;
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    return mgr.close();
+  }
+
+  static async confPortProtocolDefaults() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    conn.port = conf.univ.db[conn.dialect].port || test.defaultPort;
+    conn.protocol = conf.univ.db[conn.dialect].protocol || test.defaultProtocol;
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    await mgr.close();
+  }
+
+  static async confPortProtocolNone() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    conf.univ.db[conn.dialect].port = conn.port = null;
+    conf.univ.db[conn.dialect].protocol = conn.protocol = null;
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    await mgr.close();
+  }
+
+  static async confHostNoneThrow() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    conf.univ.db[conn.dialect].host = conn.host = null;
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    await mgr.close();
+  }
+
+  static async confNoServiceThrow() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    conn.service = null;
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    await mgr.close();
   }
 }
 
