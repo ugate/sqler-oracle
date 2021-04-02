@@ -333,7 +333,7 @@ class Tester {
 
   static async hostPortSwap() {
     // need to set a conf override to prevent overwritting of privateConf properties for other tests
-    const conf = getConf({ pool: null });console.log('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@', conf.univ.db[test.vendor], conf.db.connections[0])
+    const conf = getConf({ pool: null });
     if (conf.univ.db[test.vendor].host) {
       //delete conf.univ.db[test.vendor].host;
       conf.univ.db[test.vendor].host = `${conf.univ.db[test.vendor].host}_database`; // need to use alias hostname from docker "links"

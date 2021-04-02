@@ -19,7 +19,7 @@ const creds = {
   "protocol": "TCP",
   "username": "sys", //Os.userInfo().username,
   "password": process.env.ORACLE_PWD
-};console.log('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~', creds);
+};
 
 const test = {
   mgr: null,

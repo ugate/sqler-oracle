@@ -47,7 +47,7 @@ module.exports = class OracleTestDialect extends OracleDialect {
   async init(opts) {
     const pool = await super.init(opts);
 
-    /*const conn = await pool.getConnection();console.log('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!', conn)
+    /*const conn = await pool.getConnection();
     await conn.execute(`
     set isolation serializable
     `, {}, { autoCommit: true });
