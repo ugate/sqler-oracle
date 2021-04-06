@@ -62,12 +62,12 @@ module.exports = class OracleDialect {
         //process.env.TNS_ADMIN = priv.privatePath;
         //dlt.at.tns = Path.join(process.env.TNS_ADMIN, 'tnsnames.ora');
         dlt.at.pool.oracleConf.connectString = `(DESCRIPTION = (ADDRESS = (PROTOCOL = ${url.protocol})(HOST = ${url.host})(PORT = ${url.port}))` +
-        `(CONNECT_DATA = (SERVER = POOLED)(SERVICE = ${connConf.service})))`;
+        `(CONNECT_DATA = (SERVER = POOLED)(SERVICE_NAME = ${connConf.service})))`;
         dlt.at.connectionType = 'TNS_SERVICE';
         if (track.tnsCnt) track.tnsCnt++;
         else track.tnsCnt = 1;
       } else {
-        dlt.at.pool.oracleConf.connectString = `${url.host}/${connConf.service}:${url.port}`;
+        dlt.at.pool.oracleConf.connectString = `${url.host}:${url.port}/${connConf.service}`;
         dlt.at.connectionType = 'SERVICE';
       }
     } else throw new Error(`sqler-oracle: Missing ${connConf.dialect} "service" for conection ${connConf.id}/${connConf.name} in connection configuration options`);
