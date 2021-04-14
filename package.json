@@ -41,7 +41,7 @@
     "minami": "^1.2.3",
     "oracledb": "^5.1.0",
     "read-chunk": "^3.2.0",
-    "sqler": "^7.1.0"
+    "sqler": "^7.2.1"
   },
   "files": [
     "/index.js",

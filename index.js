@@ -86,9 +86,7 @@ module.exports = class OracleDialect {
    */
   async init(opts) {
     const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
-    // there is no prepare/unprepare since oracle uses statement caching: https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching
-    // statement cache should account for the number of prepared functions/files by a factor of 3x to accomodate up to 3x fragments for each SQL file
-    dlt.at.pool.oracleConf.stmtCacheSize = (dlt.at.driverOptions && dlt.at.driverOptions.stmtCacheSize) || ((numSql || 1) * 3);
+    statementCacheSize(dlt, numSql);
     let oraPool;
     try {
       try {
@@ -166,7 +164,8 @@ module.exports = class OracleDialect {
    * @returns {SQLERExecResults} The execution results
    */
   async exec(sql, opts, frags, meta, errorOpts) {
-    const dlt = internal(this);
+    const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
+    statementCacheSize(dlt, numSql); // <- in case it changes from a manager.scan call or the cache expired
     const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
     /** @type {OracleTransactionObject} */
     const txo = opts.transactionId ? dlt.at.transactions.get(opts.transactionId) : null;
@@ -346,6 +345,19 @@ function operation(dlt, name, reset, txoOrConn, opts) {
     }
     return dlt.at.state.pending;
   };
+}
+
+/**
+ * There is no prepare/unprepare since Oracle uses {@link https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching statement caching}.
+ * Statement cache should account for the number of prepared functions/SQL files by a factor of `3x` to accomodate that many fragments in each SQL file.
+ * @private
+ * @param {Object} dlt The internal Oracle object instance
+ * @param {Integer} numSql The total number of SQL files used on the dialect
+ * @returns {Integer} The statement cache size
+ */
+function statementCacheSize(dlt, numSql) {
+  dlt.at.pool.oracleConf.stmtCacheSize = (dlt.at.driverOptions && dlt.at.driverOptions.stmtCacheSize) || ((numSql || 1) * 3);
+  return dlt.at.pool.oracleConf.stmtCacheSize;
 }
 
 // private mapping
