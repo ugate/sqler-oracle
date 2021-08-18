@@ -183,7 +183,9 @@ class OracleDialect {
     let dopts;
     /** @type {DBDriver.ExecuteOptions} */
     let xopts;
-    let bndp = {}, rslts, xopts, error;
+    /** @type {DBDriver.Result} */
+    let rslts;
+    let bndp = {}, rslts, error;
     try {
       // interpolate and remove unused binds since
       // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
