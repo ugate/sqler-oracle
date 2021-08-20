@@ -17,26 +17,27 @@ source test/run.sh sqler_oracle sqler_oracle_dialect "npm test"
 source test/run.sh sqler_oracle sqler_oracle_dialect "npm run jsdocp-deploy"
 ```
 
-## Development
+## Testing: Development
 From the root of the project, build the test docker image and run docker-compose using the following commands:
 ```sh
 docker-compose build sqler_oracle_dialect
-docker-compose up --force-recreate
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up --force-recreate
 ```
 
-### Running Tests
-From a different command prompt, run the test suite using the following command:
+### Testing: Run/Debug
+From a different command prompt, run the following command(s):
 ```sh
+# end-to-end
 docker exec -i sqler_oracle_dialect bash "npm test"
-```
-
-### Debugging Tests
-From a different command prompt, debug a test function using the following commands:
-```sh
+# unit
 docker exec -it sqler_oracle_dialect bash
+"node_modules/.bin/lab" test/main.test.js -v
+"node_modules/.bin/lab" test/main.test.js -vi 1
+# functional (replace "someTestFunction" with static function name in test/lib/main.js)
+docker exec -it sqler_oracle_dialect bash
+node test/lib/main.js someTestFunction -NODE_ENV=test
 node --inspect-brk=0.0.0.0 test/lib/main.js someTestFunction -NODE_ENV=test
 // connections can be established using the normal node debug port `9229`
-// project dir is mouted so changes can be made to files and will be reflected via docker
 ```
 
 > If a `Segmentation fault` is encountered, try running `npm rebuild`

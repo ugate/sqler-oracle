@@ -24,7 +24,7 @@ services:
       - sqler_oracle
     build:
       context: .
-      dockerfile: Dockerfile.test
+      dockerfile: Dockerfile.ci
       args:
         <<: *env-vars
     links:

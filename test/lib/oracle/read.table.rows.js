@@ -36,11 +36,11 @@ module.exports = async function runExample(manager, connName) {
     }
 
     // commit the transaction
-    await tx.commit();
+    await tx.commit(true); // true to release the connection back to the pool
   } catch (err) {
     if (tx) {
       // rollback the transaction
-      await tx.rollback();
+      await tx.rollback(true); // true to release the connection back to the pool
     }
     throw err;
   }

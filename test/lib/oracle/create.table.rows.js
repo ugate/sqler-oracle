@@ -1,5 +1,6 @@
 'use strict';
 
+const typedefs = require('sqler/typedefs');
 const Fs = require('fs');
 
 // export just to illustrate module usage
@@ -7,6 +8,7 @@ module.exports = async function runExample(manager, connName) {
 
   const date = new Date(), rtn = new Array(2);
 
+  /** @type {typedefs.SQLERTransaction} */
   let tx;
   try {
     // start a transaction
@@ -46,11 +48,11 @@ module.exports = async function runExample(manager, connName) {
     await streamFromFileLOB(rtn[1], 'report2', './test/files/audit-report.png');
 
     // commit the transaction
-    await tx.commit();
+    await tx.commit(true); // true to release the connection back to the pool
   } catch (err) {
     if (tx) {
       // rollback the transaction
-      await tx.rollback();
+      await tx.rollback(true); // true to release the connection back to the pool
     }
     throw err;
   }

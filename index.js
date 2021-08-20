@@ -2,7 +2,6 @@
 
 const DBDriver = require('oracledb');
 const Stream = require('stream');
-const EventEmitter = require('events');
 const typedefs = require('sqler/typedefs');
 
 /**
@@ -91,9 +90,13 @@ class OracleDialect {
    */
   async init(opts) {
     const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
+    /** @type {InternalFlightRecorder} */
+    let recorder;
     statementCacheSize(dlt, numSql);
     /** @type {DBDriver.Pool} */
     let oraPool;
+    /** @type {DBDriver.Connection} */
+    let conn;
     try {
       try {
         oraPool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
@@ -108,7 +111,7 @@ class OracleDialect {
       }
       if (dlt.at.pingOnInit) {
         // validate by pinging connection from pool
-        const conn = await oraPool.getConnection();
+        conn = await oraPool.getConnection();
         try {
           await conn.ping();
         } finally {
@@ -121,12 +124,12 @@ class OracleDialect {
       }
       return oraPool;
     } catch (err) {
-      const msg = `sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`;
-      if (dlt.at.errorLogger) dlt.at.errorLogger(`${msg} ${JSON.stringify(err, null, ' ')}`);
-      const pconf = Object.assign({}, dlt.at.pool.oracleConf);
-      pconf.password = '***'; // mask sensitive data
-      err.message = `${err.message}\n${msg} for ${JSON.stringify(pconf, null, ' ')}`;
+      recorder = errored(`sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`, dlt, null, err);
       throw err;
+    } finally {
+      if (conn) {
+        await finalize(recorder, dlt, operation(dlt, 'close', false, conn, opts));
+      }
     }
   }
 
@@ -145,9 +148,10 @@ class OracleDialect {
     const tx = {
       id: txId,
       state: Object.seal({
-        isCommitted: false,
-        isRolledback: false,
-        pending: 0
+        committed: 0,
+        rolledback: 0,
+        pending: 0,
+        isReleased: false
       })
     };
     const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
@@ -155,8 +159,16 @@ class OracleDialect {
     const txo = { tx, conn: await dlt.this.getConnection(pool, dlt.at.connConf) };
     /** @type {typedefs.SQLERExecOptions} */
     const opts = { transactionId: tx.id };
-    tx.commit = operation(dlt, 'commit', true, txo, opts, 'unprepare');
-    tx.rollback = operation(dlt, 'rollback', true, txo, opts, 'unprepare');
+    const commit = operation(dlt, 'commit', true, txo, opts);
+    tx.commit = async (isRelease) => {
+      await commit();
+      if (isRelease) await operation(dlt, 'release', true, txo, opts)();
+    };
+    const rollback = operation(dlt, 'rollback', true, txo, opts);
+    tx.rollback = async (isRelease) => {
+      await rollback();
+      if (isRelease) await operation(dlt, 'release', true, txo, opts)();
+    };
     Object.freeze(tx);
     dlt.at.transactions.set(txId, txo);
     return tx;
@@ -172,76 +184,51 @@ class OracleDialect {
    * @returns {typedefs.SQLERExecResults} The execution results
    */
   async exec(sql, opts, frags, meta, errorOpts) {
+    /** @type {InternalFlightRecorder} */
+    let recorder;
     const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
     statementCacheSize(dlt, numSql); // <- in case it changes from a manager.scan call or the cache expired
-    const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
     /** @type {OracleTransactionObject} */
     const txo = opts.transactionId ? dlt.at.transactions.get(opts.transactionId) : null;
     /** @type {DBDriver.Connection} */
     let conn;
-    /** @type {OracleExecDriverOptions} */
-    let dopts;
-    /** @type {DBDriver.ExecuteOptions} */
-    let xopts;
+    /** @type {InternalExecMeta} */
+    let execMeta;
     /** @type {DBDriver.Result} */
     let rslts;
-    let bndp = {}, rslts, error;
     try {
-      // interpolate and remove unused binds since
-      // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
-      bndp = dlt.at.track.interpolate(bndp, opts.binds, dlt.at.driver, props => sql.includes(`:${props[0]}`));
-
-      dopts = opts.driverOptions;
-      xopts = !!dopts && dopts.exec ? dlt.at.track.interpolate({}, dopts.exec, dlt.at.driver) : {};
-      xopts.autoCommit = opts.autoCommit;
-      if (!xopts.hasOwnProperty('outFormat')) xopts.outFormat = dlt.at.driver.OUT_FORMAT_OBJECT;
-
-      conn = txo ? null : await dlt.this.getConnection(pool, opts);
-
       /** @type {typedefs.SQLERExecResults} */
       const rtn = {};
 
-      if (opts.prepareStatement) {
-        rtn.unprepare = async () => {
-          if (dlt.at.logger) {
-            dlt.at.logger(`sqler-oracle: "unprepare" is a noop since Oracle implements the concept of statement caching instead (${
-              meta.path
-            }). See https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching`);
+      if (opts.stream >= 0) { // streams handle prepared statements when streaming starts
+        rslts = [ opts.type === 'READ' ? await createReadStream(dlt, sql, opts, meta, txo, rtn) : createWriteStream(dlt, sql, opts, meta, txo, rtn) ];
+      } else {
+        if (opts.prepareStatement) {
+          prepared(dlt, sql, opts, meta, txo, rtn);
+        }
+        execMeta = createExecMeta(dlt, sql, opts);
+        const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
+        conn = txo ? null : await dlt.this.getConnection(pool, opts);
+        rslts = await (txo ? txo.conn : conn).execute(execMeta.sql, execMeta.binds, execMeta.dopts.exec);
+
+        if (txo) {
+          if (opts.autoCommit) {
+            await operation(dlt, 'commit', false, txo, opts)();
+          } else {
+            txo.tx.state.pending++;
+            dlt.at.state.pending++;
           }
-        };
+        }
       }
-
-      rslts = await (txo ? txo.conn : conn).execute(sql, bndp, xopts);
-
       rtn.rows = rslts.rows;
       rtn.raw = rslts;
-
-      if (txo) {
-        if (opts.autoCommit) {
-          await operation(dlt, 'commit', false, txo, opts, 'unprepare')();
-        } else {
-          dlt.at.state.pending++;
-        }
-      }
-
       return rtn;
     } catch (err) {
-      error = err;
-      const msg = ` (BINDS: [${Object.keys(bndp)}], FRAGS: ${Array.isArray(frags) ? frags.join(', ') : frags})`;
-      if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`Failed to execute the following SQL:\n${sql}`, err);
-      }
-      err.message += msg;
-      err.sqlerOracle = dopts;
+      recorder = errored(`sqler-oracle: Failed to execute the following SQL:\n${sql}`, dlt, meta, err);
       throw err;
     } finally {
-      // transactions/prepared statements need the connection to remain open until commit/rollback/unprepare
       if (conn) {
-        try {
-          await operation(dlt, 'release', true, conn, opts)();
-        } catch (cerr) {
-          if (error) error.closeError = cerr;
-        }
+        await finalize(recorder, dlt, operation(dlt, 'close', false, conn, opts));
       }
     }
   }
@@ -251,7 +238,7 @@ class OracleDialect {
    * @protected
    * @param {DBDriver.Pool} pool The connection pool
    * @param {OracleExecOptions} [opts] The execution options
-   * @returns {Object} The connection (when present)
+   * @returns {DBDriver.Connection} The connection (when present)
    */
   async getConnection(pool, opts) {
     const dlt = internal(this);
@@ -276,16 +263,17 @@ class OracleDialect {
       } catch (err) {
       }
       if (dlt.at.logger) {
-        dlt.at.logger(`sqler-oracle: Closing connection pool "${dlt.at.pool.oracleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
+        dlt.at.logger(`sqler-oracle: Closing connection pool "${dlt.at.pool.oracleConf.poolAlias}" ${statusLabel(dlt)}`);
       }
       if (pool) await pool.close();
       dlt.at.transactions.clear();
       dlt.at.state.pending = 0;
+      if (dlt.at.logger) {
+        dlt.at.logger(`sqler-oracle: Closed connection pool "${dlt.at.pool.oracleConf.poolAlias}" ${statusLabel(dlt)}`);
+      }
       return dlt.at.state.pending;
     } catch (err) {
-      if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`sqler-oracle: Failed to close connection pool "${dlt.at.pool.oracleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`, err);
-      }
+      errored(`sqler-oracle: Failed to close connection pool "${dlt.at.pool.oracleConf.poolAlias}" ${statusLabel(dlt)}`, dlt, null, err);
       throw err;
     }
   }
@@ -323,6 +311,34 @@ class OracleDialect {
 module.exports = OracleDialect;
 
 /**
+ * Creates bind parameters suitable for SQL execution in Oracle
+ * @private
+ * @param {InternalOracleDB} dlt The internal Oracle object instance
+ * @param {String} sql the SQL to execute
+ * @param {OracleExecOptions} opts The execution options
+ * @param {Object} [bindsAlt] An alternative to `opts.binds` that will be used
+ * @returns {InternalExecMeta} The binds metadata
+ */
+function createExecMeta(dlt, sql, opts, bindsAlt) {
+  /** @type {InternalExecMeta} */
+  const rtn = {};
+
+  // interpolate and remove unused binds since
+  // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
+  rtn.bndp = dlt.at.track.interpolate(bndp, bindsAlt || opts.binds, dlt.at.driver, props => sql.includes(`:${props[0]}`));
+
+  rtn.dopts = opts.driverOptions || {};
+  rtn.dopts.exec = !!rtn.dopts && rtn.dopts.exec ? dlt.at.track.interpolate({}, rtn.dopts.exec, dlt.at.driver) : {};
+  rtn.dopts.exec.autoCommit = opts.autoCommit;
+  if (!rtn.dopts.exec.hasOwnProperty('outFormat')) rtn.dopts.exec.outFormat = dlt.at.driver.OUT_FORMAT_OBJECT;
+
+  rtn.sql = sql;
+  rtn.binds = rtn.bndp;
+
+  return rtn;
+}
+
+/**
  * Executes a function by name that resides on the Oracle connection
  * @private
  * @param {InternalOracleDB} dlt The internal Oracle object instance
@@ -334,40 +350,218 @@ module.exports = OracleDialect;
  */
 function operation(dlt, name, reset, txoOrConn, opts) {
   return async () => {
+    /** @type {InternalFlightRecorder} */
+    let recorder = {};
     /** @type {OracleTransactionObject} */
     const txo = opts.transactionId && txoOrConn.tx ? txoOrConn : null;
     /** @type {DBDriver.Connection} */
     const conn = txo ? txo.conn : txoOrConn;
-    let ierr;
     try {
+      if (txo && txo.tx.state.isReleased && (name === 'commit' || name === 'rollback')) {
+        return Promise.reject(new Error(`"${name}" already called on transaction "${txo.tx.id}"`));
+      }
       if (dlt.at.logger) {
-        dlt.at.logger(`sqler-oracle: Performing ${name} on connection pool "${dlt.at.pool.oracleConf.poolAlias}" (uncommitted transactions: ${dlt.at.state.pending})`);
+        dlt.at.logger(`sqler-oracle: Performing ${name} on connection pool "${dlt.at.pool.oracleConf.poolAlias}" ${statusLabel(dlt, null, txo)}`);
       }
       await conn[name]();
+      if (txo) {
+        if (name === 'commit') {
+          txo.tx.state.committed++;
+        } else if (name === 'rollback') {
+          txo.tx.state.rolledback++;
+        } else if (name === 'release') {
+          txo.tx.state.isReleased = true;
+        }
+      }
       if (reset) {
         if (txo) dlt.at.transactions.delete(txo.tx.id);
         dlt.at.state.pending = 0;
       }
-    } catch (err) {
-      ierr = err;
-      if (dlt.at.errorLogger) {
-        dlt.at.errorLogger(`sqler-oracle: Failed to ${name} ${dlt.at.state.pending} transaction(s) with options: ${
-          opts ? JSON.stringify(opts) : 'N/A'}`, ierr);
+      if (dlt.at.logger) {
+        dlt.at.logger(`sqler-oracle: Performed ${name} on connection pool "${dlt.at.pool.oracleConf.poolAlias}" ${statusLabel(dlt, null, txo)}`);
       }
-      throw ierr;
+    } catch (err) {
+      recorder = errored(`sqler-oracle: Failed to ${name} ${dlt.at.state.pending} transaction(s) with options: ${
+        opts ? JSON.stringify(Object.keys(opts)) : 'N/A'}`, dlt, null, err);
+      throw err;
     } finally {
-      if (name !== 'end' && name !== 'release') {
-        try {
-          await conn.release();
-        } catch (cerr) {
-          if (ierr) {
-            ierr.releaseError = cerr;
-          }
-        }
+      if ((recorder && recorder.error) || (!txo && conn && name !== 'close' && name !== 'release' && name !== 'end')) {
+        await finalize(recorder, dlt, operation(dlt, 'close', false, conn, opts));
       }
     }
     return dlt.at.state.pending;
   };
+}
+
+/**
+ * Returns a label that contains connection details, transaction counts, etc.
+ * @private
+ * @param {InternalOracleDB} dlt The internal MariaDB/MySQL object instance
+ * @param {OracleExecOptions} [opts] Execution options that will be included in the staus label
+ * @param {OracleTransactionObject} [txo] An optional transactiopn to add to the status label
+ * @returns {String} The status label
+ */
+function statusLabel(dlt, opts, txo) {
+  try {
+    const state = dlt.at.state;
+    return `(( ${opts ? `[ ${opts.name ? `name: ${opts.name}, ` : ''}type: ${opts.type} ]` : ''}[ uncommitted transactions: ${state.pending}${
+      dlt.at.pool ? `, total connections: ${state.connections.count}, active connections: ${state.connections.inUse}` : ''} ]${
+        txo ? ` - Transaction state: ${JSON.stringify(txo.tx.state)}` : ''} ))`;
+  } catch (err) {
+    if (dlt.at.errorLogger) {
+      dlt.at.errorLogger('sqler-oracle: Failed to create status label', err);
+    }
+  }
+}
+
+/**
+ * Creates a read stream that batches the read SQL executions
+ * @private
+ * @param {InternalOracleDB} dlt The internal Oracle object instance
+ * @param {String} sql The SQL to execute.
+ * @param {OracleExecOptions} opts The execution options
+ * @param {typedefs.SQLERExecMeta} meta The SQL execution metadata
+ * @param {OracleTransactionObject} [txo] The transaction object to use. When not specified, a connection will be established on the first write to the stream.
+ * @param {typedefs.SQLERExecResults} rtn Where the _public_ prepared statement functions will be set (ignored when the read stream is not for a prepared
+ * statement).
+ * @returns {Stream.Readable} The created read stream
+ */
+async function createReadStream(dlt, sql, opts, meta, txo, rtn) {
+  /** @type {Promise<DBDriver.Connection>} */
+  let connProm;
+  /** @type {InternalFlightRecorder[]} */
+  const recorders = [];
+  const execMeta = createExecMeta(dlt, sql, opts);
+  const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
+  const conn = txo ? null : connProm ? await connProm : await (connProm = dlt.this.getConnection(pool, opts));
+  const readable = (txo ? txo.conn : conn).queryStream(execMeta.sql, execMeta.binds);
+  // dlt.at.track.readable(opts, readable);
+  readable.on('error', async (err) => {
+    if (err.sqlerOracle) return;
+    recorders.push(errored(`sqler-oracle: An error occurred during ${Stream.Readable.name} streaming for SQL:\n${sql}`, dlt, meta, err));
+  });
+  readable.on('close', closeStreamHandler(dlt, sql, opts, meta, txo, () => connProm, readable, recorders));
+  return readable;
+}
+
+/**
+ * Creates a write stream that batches the write SQL executions
+ * @private
+ * @param {InternalOracleDB} dlt The internal Oracle object instance
+ * @param {String} sql The SQL to execute
+ * @param {OracleExecOptions} opts The execution options
+ * @param {typedefs.SQLERExecMeta} meta The SQL execution metadata
+ * @param {OracleTransactionObject} [txo] The transaction object to use. When not specified, a connection will be established on the first write to the stream.
+ * @param {typedefs.SQLERExecResults} rtn Where the _public_ prepared statement functions will be set (ignored when the write stream is not for a prepared
+ * statement).
+ * @returns {Stream.Writable} The created write stream
+ */
+function createWriteStream(dlt, sql, opts, meta, txo, rtn) {
+  /** @type {Promise<DBDriver.Connection>} */
+  let connProm;
+  /** @type {InternalFlightRecorder[]} */
+  const recorders = [];
+  const writable = dlt.at.track.writable(opts, async (batch) => {
+    try {
+      if (dlt.at.logger) {
+        dlt.at.logger(`sqler-oracle: Started ${Stream.Writable.name} stream execution for ${batch.length} batches ${statusLabel(dlt, opts, txo)}`);
+      }
+      const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
+      const conn = txo ? txo.conn : connProm ? await connProm : await (connProm = dlt.this.getConnection(pool, opts));
+      // batch all the binds into a single exectuion for a performance gain
+      // https://oracle.github.io/node-oracledb/doc/api.html see connection.executeMany()
+      let bi = 0;
+      const bindsArray = new Array(batch.length);
+      /** @type {InternalExecMeta} */
+      let execMeta;
+      for (let binds of batch) {
+        execMeta = createExecMeta(dlt, sql, opts, binds);
+        bindsArray[bi] = execMeta.binds;
+        bi++;
+      }
+      const rslts = await conn.executeMany(execMeta.sql, bindsArray, execMeta.dopts.exec);
+      if (dlt.at.logger) {
+        dlt.at.logger(`sqler-oracle: Completed execution of ${batch.length} batched write streams`);
+      }
+      return rslts;
+    } catch (err) {
+      recorders.push(errored(`sqler-oracle: Failed to execute writable stream batch for ${
+        batch ? batch.length : 'invalid batch'} on the following SQL:\n${sql}`, dlt, meta, err));
+      throw err;
+    }
+  });
+  writable.on('close' /* 'finish' */, closeStreamHandler(dlt, sql, opts, meta, txo, () => conn, writable, recorders));
+  return writable;
+}
+
+/**
+ * Handles a `close` event on a stream by closing a connection (when passed), emitting the {@link typedefs.EVENT_STREAM_RELEASE} event and handling a transaction
+ * `commit` (when a {@link OracleTransactionObject} is passed).
+ * @private
+ * @param {InternalOracleDB} dlt The internal dialect object instance
+ * @param {String} sql The SQL to execute
+ * @param {OracleExecOptions} opts The execution options
+ * @param {typedefs.SQLERExecMeta} meta The SQL execution metadata
+ * @param {OracleTransactionObject} [txo] The transaction object to use. When not specified, a connection will be established on the first write to the stream.
+ * @param {Function} [getConn] An `async function()` to get the {@link DBDriver.Connection} that will be closed (ignored when a transaction is specified).
+ * @param {(Stream.Readable | Stream.Writable)} stream The stream where the `close` event will be emitted.
+ * @param {InternalFlightRecorder[]} recorders The flight recorders where the any errors will be recorded.
+ * @returns {Function} An `async function()` that handles the `close` event on the specified stream
+ */
+function closeStreamHandler(dlt, sql, opts, meta, txo, getConn, stream, recorders) {
+  const type = stream instanceof Stream.Readable ? Stream.Readable.name : stream instanceof Stream.Writable ? Stream.Writable.name : 'N/A';
+  let isCommitted;
+  return async () => {
+    try {
+      /** @type {DBDriver.Connection} */
+      const conn = typeof getConn === 'function' ? await getConn() : null;
+      if (conn) {
+        await operation(dlt, 'close', false, conn, opts)();
+        stream.emit(typedefs.EVENT_STREAM_RELEASE);
+      }
+      if (txo && opts.autoCommit && !recorders.length) {
+        await operation(dlt, 'commit', false, txo, opts)();
+        isCommitted = true;
+        stream.emit(typedefs.EVENT_STREAM_COMMIT, txo.tx.id);
+      } else if (txo) {
+        txo.tx.state.pending++;
+        dlt.at.state.pending++;
+      }
+    } catch (err) {
+      recorders.push(errored(`sqler-oracle: Failed to handle ${type} stream close event for SQL:\n${sql}`, dlt, meta, err));
+      stream.emit('error', recorders[recorders.length - 1].error);
+    } finally {
+      if (!isCommitted && txo && opts.autoCommit && recorders.length) {
+        await finalize(recorders, dlt, async () => {
+          await operation(dlt, 'rollback', false, txo, opts)();
+          stream.emit(typedefs.EVENT_STREAM_ROLLBACK, txo.tx.id);
+        });
+      }
+    }
+  };
+}
+
+/**
+ * Either generates a prepared statement when it doesn't currently exist, or returns an existing prepared statement that waits for the original prepared statement
+ * creation/connectivity/setup to complete before performing any executions.
+ * @private
+ * @param {InternalOracleDB} dlt The internal Oracle object instance
+ * @param {String} sql The raw SQL to execute for the prepared statement
+ * @param {OracleExecOptions} opts The execution options
+ * @param {typedefs.SQLERExecMeta} meta The SQL execution metadata
+ * @param {OracleTransactionObject} [txo] The transaction object to use. When not specified, a connection will be established.
+ * @param {typedefs.SQLERExecResults} rtn The execution results used by the prepared statement where `unprepare` will be set
+ * @returns {Object} The prepared statement
+ */
+function prepared(dlt, sql, opts, meta, txo, rtn) {
+  rtn.unprepare = async () => {
+    if (dlt.at.logger) {
+      dlt.at.logger(`sqler-oracle: "unprepare" is a noop since Oracle implements the concept of statement caching instead (${
+        meta.path
+      }). See https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching`);
+    }
+  };
+  return {};
 }
 
 /**
@@ -381,6 +575,60 @@ function operation(dlt, name, reset, txoOrConn, opts) {
 function statementCacheSize(dlt, numSql) {
   dlt.at.pool.oracleConf.stmtCacheSize = (dlt.at.driverOptions && dlt.at.driverOptions.stmtCacheSize) || ((numSql || 1) * 3);
   return dlt.at.pool.oracleConf.stmtCacheSize;
+}
+
+/**
+ * Error handler
+ * @private
+ * @param {String} label A label to use to describe the error
+ * @param {InternalOracleDB} dlt The internal dialect object instance
+ * @param {typedefs.SQLERExecMeta} [meta] The SQL execution metadata
+ * @param {Error} error An error that has occurred
+ * @returns {InternalFlightRecorder} The flight recorder
+ */
+function errored(label, dlt, meta, error) {
+  if (dlt.at.errorLogger) {
+    dlt.at.errorLogger(label, error);
+  }
+  try {
+    const pconf = Object.assign({}, dlt.at.pool.oracleConf);
+    pconf.password = '***'; // mask sensitive data
+    error.sqlerOracle = {
+      message: label,
+      poolConf: pconf,
+      status: statusLabel(dlt)
+    };
+  } catch (err) {
+    if (dlt.at.errorLogger) {
+      dlt.at.errorLogger('sqler-oracle: Failed to capture error meta', err);
+    }
+  }
+  return { error };
+}
+
+/**
+ * Finally block handler
+ * @private
+ * @param {(InternalFlightRecorder | InternalFlightRecorder[])} [recorder] The flight recorder
+ * @param {InternalOracleDB} dlt The internal dialect object instance
+ * @param {Function} [func] An `async function()` that will be invoked in a catch wrapper that will be consumed and recorded when a flight recorder is
+ * provided
+ * @param {String} [funcErrorProperty=releaseError] A property name on the flight recorder error that will be set when the `func` itself errors
+ * @returns {InternalFlightRecorder} The recorded error
+ */
+async function finalize(recorder, dlt, func, funcErrorProperty = 'releaseError') {
+  // transactions/prepared statements need the connection to remain open until commit/rollback/unprepare
+  if (typeof func === 'function') {
+    try {
+      await func();
+    } catch (err) {
+      if (recorder) {
+        for (let rec of Array.isArray(recorder) ? recorder : [recorder]) {
+          if (rec.error) recorder.error[funcErrorProperty] = err;
+        }
+      }
+    }
+  }
 }
 
 // private mapping
@@ -422,10 +670,7 @@ let internal = function(dialect) {
  * Oracle specific extension of the {@link typedefs.SQLERConnectionOptions} from the [`sqler`](https://ugate.github.io/sqler/) module.
  * @typedef {Object} OracleConnectionOptionsType
  * @property {OracleDriverOptions} [driverOptions] The `oracledb` module specific options.
- */
-
-/**
- * @typedef {typedefs.SQLERConnectionOptions | OracleConnectionOptionsType} OracleConnectionOptions
+ * @typedef {typedefs.SQLERConnectionOptions & OracleConnectionOptionsType} OracleConnectionOptions
  */
 
 /**
@@ -434,7 +679,7 @@ let internal = function(dialect) {
  * @property {DBDriver.Pool} [pool] The pool attribute options passed into `oracledbPool.getConnection()`. When a value is a string surrounded by `${}`, it will be assumed
  * to be a _constant_ property that resides on the `oracledb` module and will be interpolated accordingly.
  * For example `driverOptions.pool.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `pool.someProp = oracledb.ORACLEDB_CONSTANT`.
- * @property {DBDriver.ExecuteOptions} [exec] The execution options passed into `oracledbConnection.execute()`.
+ * @property {(DBDriver.ExecuteOptions | DBDriver.ExecuteManyOptions)} [exec] The execution options passed into `oracledbConnection.execute()`.
  * __NOTE: `driverOptions.autoCommit` is ignored in favor of the universal `autoCommit` set directly on the {@link typedefs.SQLERExecOptions}.__
  * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
  * accordingly.
@@ -448,10 +693,7 @@ let internal = function(dialect) {
  * `binds.name = { dir: oracledb.BIND_OUT, type: oracledb.STRING, maxSize: 40 }`.
  * @typedef {Object} OracleExecOptionsType
  * @property {OracleExecDriverOptions} [driverOptions] The `oracledb` module specific execution options.
- */
-
-/**
- * @typedef {typedefs.SQLERExecOptions | OracleExecOptionsType} OracleExecOptions
+ * @typedef {typedefs.SQLERExecOptions & OracleExecOptionsType} OracleExecOptions
  */
 
 /**
@@ -481,5 +723,24 @@ let internal = function(dialect) {
  * @property {Function} [at.errorLogger] A function that takes one or more arguments and logs the results as an error (similar to `console.error`)
  * @property {Function} [at.logger] A function that takes one or more arguments and logs the results (similar to `console.log`)
  * @property {Boolean} [at.debug] A flag that indicates the dialect should be run in debug mode (if supported)
+ * @property {Boolean} [at.pingOnInit] Truthy to ping when {@link OracleDialect.init}
+ * @private
+ */
+
+/**
+ * Metadata used inpreparation for execution.
+ * @typedef {Object} InternalExecMeta
+ * @property {OracleExecDriverOptions} dopts The formatted execution driver options.
+ * @property {String} sql The formatted/bound execution SQL statement. Will also be set on `dopts.exec.sql` (when present).
+ * @property {(Object | Array)} [binds] Either an object that contains the bind parameters as property names and property values as the bound values that can be
+ * bound to an SQL statement or an `Array` of values format to support MySQL/MariaDB use of `?` parameter markers (non-prepared statements).
+ * @property {Object} [bndp] The interpolated version of `opts.binds`.
+ * @private
+ */
+
+/**
+ * @typedef {Object} InternalFlightRecorder
+ * @property {Error} [error] An errored that occurred
+ * @property {DBDriver.Connection} [conn] A connection that will be `released` when an error exists
  * @private
  */

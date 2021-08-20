@@ -77,11 +77,11 @@ async function explicitTransactionUpdate(manager, connName, binds1, binds2, rtn)
     rtn.txExpRslts[1] = await rtn.txExpRslts[1];
 
     // commit the transaction
-    await tx.commit();
+    await tx.commit(true); // true to release the connection back to the pool
   } catch (err) {
     if (tx) {
       // rollback the transaction
-      await tx.rollback();
+      await tx.rollback(true); // true to release the connection back to the pool
     }
     throw err;
   }
@@ -144,12 +144,12 @@ async function preparedStatementExplicitTxUpdate(manager, connName, binds, rtn) 
 
     // unprepare will be called when calling commit
     // (alt, could have called unprepare before commit)
-    await tx.commit();
+    await tx.commit(true); // true to release the connection back to the pool
   } catch (err) {
     if (tx) {
       // unprepare will be called when calling rollback
       // (alt, could have called unprepare before rollback)
-      await tx.rollback();
+      await tx.rollback(true); // true to release the connection back to the pool
     }
     throw err;
   }

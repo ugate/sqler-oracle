@@ -1,0 +1,5 @@
+version: '3.9'
+services:
+  sqler_oracle_dialect:
+    volumes:
+      - ./:/home/node/app # allow changes to code w/o restarting/building container
