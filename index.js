@@ -25,6 +25,10 @@ class OracleDialect {
     dlt.at.transactions = new Map();
     // sqler compatible state
     dlt.at.state = {
+      connections: {
+        count: 0,
+        inUse: 0
+      },
       pending: 0
     };
 
@@ -90,13 +94,9 @@ class OracleDialect {
    */
   async init(opts) {
     const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
-    /** @type {InternalFlightRecorder} */
-    let recorder;
     statementCacheSize(dlt, numSql);
     /** @type {DBDriver.Pool} */
     let oraPool;
-    /** @type {DBDriver.Connection} */
-    let conn;
     try {
       try {
         oraPool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
@@ -111,25 +111,22 @@ class OracleDialect {
       }
       if (dlt.at.pingOnInit) {
         // validate by pinging connection from pool
-        conn = await oraPool.getConnection();
+        /** @type {DBDriver.Connection} */
+        const conn = await oraPool.getConnection();
+        /** @type {InternalFlightRecorder} */
+        let pingRecorder;
         try {
           await conn.ping();
+        } catch (err) {
+          pingRecorder = errored(`sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`, dlt, null, err);
         } finally {
-          try {
-            await conn.close();
-          } catch (err) {
-            if (dlt.at.errorLogger) dlt.at.errorLogger(`sqler-oracle: Failed to close connection during ping ${err.message}`, err);
-          }
+          await finalize(pingRecorder, dlt, operation(dlt, 'close', false, conn, opts));
         }
       }
       return oraPool;
     } catch (err) {
-      recorder = errored(`sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`, dlt, null, err);
+      errored(`sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`, dlt, null, err);
       throw err;
-    } finally {
-      if (conn) {
-        await finalize(recorder, dlt, operation(dlt, 'close', false, conn, opts));
-      }
     }
   }
 
@@ -162,12 +159,12 @@ class OracleDialect {
     const commit = operation(dlt, 'commit', true, txo, opts);
     tx.commit = async (isRelease) => {
       await commit();
-      if (isRelease) await operation(dlt, 'release', true, txo, opts)();
+      if (isRelease) await operation(dlt, 'close', true, txo, opts)();
     };
     const rollback = operation(dlt, 'rollback', true, txo, opts);
     tx.rollback = async (isRelease) => {
       await rollback();
-      if (isRelease) await operation(dlt, 'release', true, txo, opts)();
+      if (isRelease) await operation(dlt, 'close', true, txo, opts)();
     };
     Object.freeze(tx);
     dlt.at.transactions.set(txId, txo);
@@ -202,6 +199,8 @@ class OracleDialect {
 
       if (opts.stream >= 0) { // streams handle prepared statements when streaming starts
         rslts = [ opts.type === 'READ' ? await createReadStream(dlt, sql, opts, meta, txo, rtn) : createWriteStream(dlt, sql, opts, meta, txo, rtn) ];
+        rtn.rows = rslts;
+        rtn.raw = rslts;
       } else {
         if (opts.prepareStatement) {
           prepared(dlt, sql, opts, meta, txo, rtn);
@@ -219,9 +218,9 @@ class OracleDialect {
             dlt.at.state.pending++;
           }
         }
+        rtn.rows = rslts.rows;
+        rtn.raw = rslts;
       }
-      rtn.rows = rslts.rows;
-      rtn.raw = rslts;
       return rtn;
     } catch (err) {
       recorder = errored(`sqler-oracle: Failed to execute the following SQL:\n${sql}`, dlt, meta, err);
@@ -290,13 +289,10 @@ class OracleDialect {
     } catch (err) {
       pooled = {};
     }
-    return {
-      connection: {
-        count: pooled.connectionsOpen || 0,
-        inUse: pooled.connectionsInUse || 0
-      },
-      pending: dlt.at.state.pending
-    };
+    dlt.at.state.connections.count = pooled.connectionsOpen || 0;
+    dlt.at.state.connections.inUse = pooled.connectionsInUse || 0;
+    // use a copy for external use
+    return JSON.parse(JSON.stringify(dlt.at.state));
   }
 
   /**
@@ -322,18 +318,30 @@ module.exports = OracleDialect;
 function createExecMeta(dlt, sql, opts, bindsAlt) {
   /** @type {InternalExecMeta} */
   const rtn = {};
+  const binds = bindsAlt || opts.binds;
+  /** @type {DBDriver.ExecuteManyOptions} */
+  let exec;
 
   // interpolate and remove unused binds since
   // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
-  rtn.bndp = dlt.at.track.interpolate(bndp, bindsAlt || opts.binds, dlt.at.driver, props => sql.includes(`:${props[0]}`));
+  rtn.bndp = dlt.at.track.interpolate({}, binds, dlt.at.driver, props => sql.includes(`:${props[0]}`));
 
   rtn.dopts = opts.driverOptions || {};
-  rtn.dopts.exec = !!rtn.dopts && rtn.dopts.exec ? dlt.at.track.interpolate({}, rtn.dopts.exec, dlt.at.driver) : {};
+  rtn.dopts.exec = !!rtn.dopts && rtn.dopts.exec ? dlt.at.track.interpolate(exec || {}, rtn.dopts.exec, dlt.at.driver) : exec || {};
   rtn.dopts.exec.autoCommit = opts.autoCommit;
   if (!rtn.dopts.exec.hasOwnProperty('outFormat')) rtn.dopts.exec.outFormat = dlt.at.driver.OUT_FORMAT_OBJECT;
+  if (opts.stream >= 0 && rtn.bndp) {
+    for (let name in rtn.bndp) {
+      if (rtn.bndp[name] && (rtn.bndp[name].dir === dlt.at.driver.BIND_OUT || rtn.bndp[name].dir === dlt.at.driver.BIND_IN || rtn.bndp[name].dir === dlt.at.driver.BIND_INOUT)) {
+        rtn.dopts.exec.bindDefs = rtn.dopts.exec.bindDefs || {};
+        rtn.dopts.exec.bindDefs[name] = rtn.bndp[name];
+        // rtn.bndp[name] = name;
+      }
+    }
+  }
 
   rtn.sql = sql;
-  rtn.binds = rtn.bndp;
+  rtn.binds = rtn.binds || rtn.bndp;
 
   return rtn;
 }
@@ -369,7 +377,7 @@ function operation(dlt, name, reset, txoOrConn, opts) {
           txo.tx.state.committed++;
         } else if (name === 'rollback') {
           txo.tx.state.rolledback++;
-        } else if (name === 'release') {
+        } else if (name === 'close' || name === 'release' /* release is depricated */) {
           txo.tx.state.isReleased = true;
         }
       }
@@ -385,7 +393,7 @@ function operation(dlt, name, reset, txoOrConn, opts) {
         opts ? JSON.stringify(Object.keys(opts)) : 'N/A'}`, dlt, null, err);
       throw err;
     } finally {
-      if ((recorder && recorder.error) || (!txo && conn && name !== 'close' && name !== 'release' && name !== 'end')) {
+      if (name !== 'close' && name !== 'release' /* release is depricated */ && name !== 'end' && ((recorder && recorder.error) || (!txo && conn))) {
         await finalize(recorder, dlt, operation(dlt, 'close', false, conn, opts));
       }
     }
@@ -396,7 +404,7 @@ function operation(dlt, name, reset, txoOrConn, opts) {
 /**
  * Returns a label that contains connection details, transaction counts, etc.
  * @private
- * @param {InternalOracleDB} dlt The internal MariaDB/MySQL object instance
+ * @param {InternalOracleDB} dlt The internal dialect object instance
  * @param {OracleExecOptions} [opts] Execution options that will be included in the staus label
  * @param {OracleTransactionObject} [txo] An optional transactiopn to add to the status label
  * @returns {String} The status label
@@ -470,18 +478,31 @@ function createWriteStream(dlt, sql, opts, meta, txo, rtn) {
       const conn = txo ? txo.conn : connProm ? await connProm : await (connProm = dlt.this.getConnection(pool, opts));
       // batch all the binds into a single exectuion for a performance gain
       // https://oracle.github.io/node-oracledb/doc/api.html see connection.executeMany()
+      let rslts, rslt;
       let bi = 0;
       const bindsArray = new Array(batch.length);
       /** @type {InternalExecMeta} */
       let execMeta;
       for (let binds of batch) {
         execMeta = createExecMeta(dlt, sql, opts, binds);
-        bindsArray[bi] = execMeta.binds;
+        // if (execMeta.outs) {
+          // rslt = await conn.execute(execMeta.sql, execMeta.binds, execMeta.dopts.exec);
+          // if (rslts) rslts.push(rslt);
+          // else rslts = [ rslt ];
+        // } else {
+          bindsArray[bi] = execMeta.binds;
+        // }
         bi++;
+      }console.log(bindsArray, execMeta.dopts.exec);
+      rslt = await conn.executeMany(execMeta.sql, bindsArray, execMeta.dopts.exec);
+      if (rslts) {
+        rslts.push(rslt);
+      } else {
+        rslts = rslt;
       }
-      const rslts = await conn.executeMany(execMeta.sql, bindsArray, execMeta.dopts.exec);
       if (dlt.at.logger) {
-        dlt.at.logger(`sqler-oracle: Completed execution of ${batch.length} batched write streams`);
+        dlt.at.logger(`sqler-oracle: Completed execution of ${batch.length} batched write streams${
+          execMeta.outs ? ` (with ${execMeta.outs.length} out binds)` : ''}`);
       }
       return rslts;
     } catch (err) {
@@ -490,7 +511,7 @@ function createWriteStream(dlt, sql, opts, meta, txo, rtn) {
       throw err;
     }
   });
-  writable.on('close' /* 'finish' */, closeStreamHandler(dlt, sql, opts, meta, txo, () => conn, writable, recorders));
+  writable.on('close' /* 'finish' */, closeStreamHandler(dlt, sql, opts, meta, txo, () => connProm, writable, recorders));
   return writable;
 }
 
@@ -733,8 +754,9 @@ let internal = function(dialect) {
  * @property {OracleExecDriverOptions} dopts The formatted execution driver options.
  * @property {String} sql The formatted/bound execution SQL statement. Will also be set on `dopts.exec.sql` (when present).
  * @property {(Object | Array)} [binds] Either an object that contains the bind parameters as property names and property values as the bound values that can be
- * bound to an SQL statement or an `Array` of values format to support MySQL/MariaDB use of `?` parameter markers (non-prepared statements).
+ * bound to an SQL statement or an `Array` of values format to support use of `?` parameter markers (non-prepared statements).
  * @property {Object} [bndp] The interpolated version of `opts.binds`.
+ * @property {Object} [bindDefs] The properties within `binds` that are marked to be `oracledb.BIND_OUT`
  * @private
  */
 

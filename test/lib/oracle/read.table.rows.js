@@ -1,12 +1,15 @@
 'use strict';
 
+const typedefs = require('sqler/typedefs');
 const Os = require('os');
 const Fs = require('fs');
 
 // export just to illustrate module usage
 module.exports = async function runExample(manager, connName) {
+  /** @type {typedefs.SQLERExecResults[]} */
   const rtn = new Array(2);
 
+  /** @type {typedefs.SQLERTransaction} */
   let tx;
   try {
     // start a transaction (needed to keep LOB stream open)
@@ -53,7 +56,7 @@ module.exports = async function runExample(manager, connName) {
  * @param {Object} row The `results.row` that contains the `name` 
  * @param {String} name The outbound LOB parameter name that will be streamed
  * @param {String} pathToLOB The LOB file path to stream
- * @returns {SQLERExecResults} The passed results
+ * @returns {typedefs.SQLERExecResults} The passed results
  */
 async function streamToFileLOB(row, name, pathToLOB) {
   return new Promise((resolve, reject) => {

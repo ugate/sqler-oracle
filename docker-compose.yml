@@ -42,7 +42,7 @@ services:
     environment:
       <<: [ *env-vars, *env-tokens ]
     volumes:
-      - .:/home/node/app
+      - ./docs:/home/node/app/docs
 networks:
   app:
     driver: bridge

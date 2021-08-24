@@ -10,7 +10,11 @@
         "dir": "db/oracle",
         "service": "XE",
         "dialect": "oracle",
-        "pool": {},
+        "pool": {
+          "min": 2,
+          "max": 2,
+          "increment": 0
+        },
         "driverOptions": {
           "global": {
             "maxRows": 0

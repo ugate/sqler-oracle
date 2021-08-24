@@ -67,9 +67,9 @@ module.exports = class OracleTestDialect extends OracleDialect {
     const state = super.state;
     expect(state, 'dialect.state').to.be.object();
     expect(state.pending, 'dialect.state.pending').to.be.number();
-    expect(state.connection, 'dialect.connection').to.be.object();
-    expect(state.connection.count, 'dialect.connection.count').to.be.number();
-    expect(state.connection.inUse, 'dialect.connection.inUse').to.be.number();
+    expect(state.connections, 'dialect.connections').to.be.object();
+    expect(state.connections.count, 'dialect.connections.count').to.be.number();
+    expect(state.connections.inUse, 'dialect.connections.inUse').to.be.number();
 
     expect(meta, 'meta').to.be.object();
     expect(meta.name, 'meta').to.be.string();
