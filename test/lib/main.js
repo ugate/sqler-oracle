@@ -574,7 +574,7 @@ function crudly(state, expectOpts, rslt) {
   expectOpts.count = expectOpts.hasOwnProperty('count') ? expectOpts.count : 0;
   expect(rslt.rows, `CRUD ${expectOpts.label} rows`).array();
   if (!expectOpts.label.includes('read')) return;
-  expect(rslt.rows, `CRUD ${expectOpts.label} rows.length`).length(expectOpts.streamClass ? 1 : expectOpts.count);
+  expect(rslt.rows, `CRUD ${expectOpts.label} rows.length`).length(expectOpts.streamClass ? 2 : expectOpts.count);
   let updated;
   const expectRow = (row) => {
     expect(row, `CRUD ${expectOpts.label} row`).object();
@@ -588,7 +588,7 @@ function crudly(state, expectOpts, rslt) {
       // expect(row.report, `CRUD ${expectOpts.label} row.report`).to.be.buffer();
       if (row.reportPath) {
         const reportBuffer = readChunk.sync(row.reportPath, 0, 12);
-        const reportType = imageType(reportBuffer);
+        const reportType = imageType(reportBuffer);console.log('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~', reportType)
         // TODO : validate image Mime-Type (currently, null)
         // expect(reportType, `CRUD ${expectOpts.label} row.report Image Type`).to.be.object();
         // expect(reportType.mime, `CRUD ${expectOpts.label} row.report Image Mime-Type`).to.equal('image/png');

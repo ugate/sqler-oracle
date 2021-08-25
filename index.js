@@ -319,29 +319,18 @@ function createExecMeta(dlt, sql, opts, bindsAlt) {
   /** @type {InternalExecMeta} */
   const rtn = {};
   const binds = bindsAlt || opts.binds;
-  /** @type {DBDriver.ExecuteManyOptions} */
-  let exec;
 
   // interpolate and remove unused binds since
   // Oracle will throw "ORA-01036: illegal variable name/number" when unused bind parameters are passed (also, cuts down on payload bloat)
   rtn.bndp = dlt.at.track.interpolate({}, binds, dlt.at.driver, props => sql.includes(`:${props[0]}`));
 
   rtn.dopts = opts.driverOptions || {};
-  rtn.dopts.exec = !!rtn.dopts && rtn.dopts.exec ? dlt.at.track.interpolate(exec || {}, rtn.dopts.exec, dlt.at.driver) : exec || {};
+  rtn.dopts.exec = !!rtn.dopts && rtn.dopts.exec ? dlt.at.track.interpolate({}, rtn.dopts.exec, dlt.at.driver) : {};
   rtn.dopts.exec.autoCommit = opts.autoCommit;
-  if (!rtn.dopts.exec.hasOwnProperty('outFormat')) rtn.dopts.exec.outFormat = dlt.at.driver.OUT_FORMAT_OBJECT;
-  if (opts.stream >= 0 && rtn.bndp) {
-    for (let name in rtn.bndp) {
-      if (rtn.bndp[name] && (rtn.bndp[name].dir === dlt.at.driver.BIND_OUT || rtn.bndp[name].dir === dlt.at.driver.BIND_IN || rtn.bndp[name].dir === dlt.at.driver.BIND_INOUT)) {
-        rtn.dopts.exec.bindDefs = rtn.dopts.exec.bindDefs || {};
-        rtn.dopts.exec.bindDefs[name] = rtn.bndp[name];
-        // rtn.bndp[name] = name;
-      }
-    }
-  }
+  if (!rtn.dopts.exec.hasOwnProperty('outFormat')) rtn.dopts.exec.outFormat = dlt.at.driver.OUT_FORMAT_OBJECT;console.log('~~~~~~~~~~~~~~', rtn.dopts.exec.outFormat === dlt.at.driver.OUT_FORMAT_OBJECT)
 
   rtn.sql = sql;
-  rtn.binds = rtn.binds || rtn.bndp;
+  rtn.binds = rtn.bndp;
 
   return rtn;
 }
@@ -485,20 +474,17 @@ function createWriteStream(dlt, sql, opts, meta, txo, rtn) {
       let execMeta;
       for (let binds of batch) {
         execMeta = createExecMeta(dlt, sql, opts, binds);
-        // if (execMeta.outs) {
-          // rslt = await conn.execute(execMeta.sql, execMeta.binds, execMeta.dopts.exec);
-          // if (rslts) rslts.push(rslt);
-          // else rslts = [ rslt ];
-        // } else {
-          bindsArray[bi] = execMeta.binds;
-        // }
+        // rslt = await conn.execute(execMeta.sql, execMeta.binds, execMeta.dopts.exec);
+        // if (rslts) rslts.push(rslt);
+        // else rslts = [ rslt ];
+        bindsArray[bi] = execMeta.binds;
         bi++;
-      }console.log(bindsArray, execMeta.dopts.exec);
+      }
       rslt = await conn.executeMany(execMeta.sql, bindsArray, execMeta.dopts.exec);
       if (rslts) {
         rslts.push(rslt);
       } else {
-        rslts = rslt;
+        rslts = Array.isArray(rslt) ? rslt : [ rslt ];
       }
       if (dlt.at.logger) {
         dlt.at.logger(`sqler-oracle: Completed execution of ${batch.length} batched write streams${
@@ -705,6 +691,9 @@ let internal = function(dialect) {
  * When a value is a string surrounded by `${}`, it will be assumed to be a _constant_ property that resides on the `oracledb` module and will be interpolated
  * accordingly.
  * For example `driverOptions.exec.someProp = '${ORACLEDB_CONSTANT}'` will be interpolated as `oracledbExecOpts.someProp = oracledb.ORACLEDB_CONSTANT`.
+ * When streaming __writes__ using `execOpts.stream`, all executions are batched into `oracledb.Connection.executeMany` using `execOpts.stream` value as the batch size.
+ * Therefore, a valid `exec.bindDefs` should be included as defined within the [oracldb documentation](https://oracle.github.io/node-oracledb/doc/api.html) when [DML
+ * RETURNING](https://oracle.github.io/node-oracledb/doc/api.html#dml-returning-with-executemany).
  */
 
 /**
