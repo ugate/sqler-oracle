@@ -535,7 +535,8 @@ async function crud(type, count = 0) {
 
   const del = getCrudOp(`delete${typd}`, test.vendor);
   rslts[++rslti] = await del(test.mgr, test.vendor);
-  crudly(state, { label: `delete${typd}`, streamClass: streamClassWrite, count }, rslts[rslti]);
+  // delete will be checked in next read
+  // crudly(state, { label: `delete${typd}`, streamClass: streamClassWrite, count }, rslts[rslti]);
 
   rslts[++rslti] = await read(test.mgr, test.vendor);
   crudly(state, { label: `delete read${typd}`, streamClass: streamClassRead, count: 0 }, rslts[rslti]);
@@ -583,23 +584,18 @@ function crudly(state, expectOpts, rslt) {
     expect(updated, `CRUD ${expectOpts.label} row.updated`).date();
     if (state && state.lastUpdated) expect(updated, `CRUD ${expectOpts.label} row.updated > lastUpdated`).greaterThan(state.lastUpdated);
     // expect binary report image
-    if (row.report) {
-      // report will come in as stream rather than buffer
-      // expect(row.report, `CRUD ${expectOpts.label} row.report`).to.be.buffer();
-      if (row.reportPath) {
-        const reportBuffer = readChunk.sync(row.reportPath, 0, 12);
-        const reportType = imageType(reportBuffer);console.log('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~', reportType)
-        // TODO : validate image Mime-Type (currently, null)
-        // expect(reportType, `CRUD ${expectOpts.label} row.report Image Type`).to.be.object();
-        // expect(reportType.mime, `CRUD ${expectOpts.label} row.report Image Mime-Type`).to.equal('image/png');
-      }
+    if (row.reportPath) {
+      const reportBuffer = readChunk.sync(row.reportPath, 0, 12);
+      const reportType = imageType(reportBuffer);
+      expect(reportType, `CRUD ${expectOpts.label} row.report Image Type`).to.be.object();
+      expect(reportType.mime, `CRUD ${expectOpts.label} row.report Image Mime-Type`).to.equal('image/png');
     }
   };
   let rows;
   if (expectOpts.streamClass) {
     // should be set by the executing script
     expect(rslt.jsonFile, `CRUD ${expectOpts.label} jsonFile`).not.empty();
-    rows = JSON.parse(Fs.readFileSync(rslt.jsonFile, { encoding: 'utf-8' }));console.log('~~~~~~~~~~~~~~~~~~~~~~~', rows)
+    rows = JSON.parse(Fs.readFileSync(rslt.jsonFile, { encoding: 'utf-8' }));
     expect(rows, `CRUD ${expectOpts.label} jsonFile rows`).array();
     expect(rows, `CRUD ${expectOpts.label} jsonFile rows.length`).length(expectOpts.count);
     for (let row of rslt.rows) {

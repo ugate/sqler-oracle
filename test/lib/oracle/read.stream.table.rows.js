@@ -8,7 +8,6 @@ const Stream = require('stream');
 // const { pipeline } = require('stream/promises');
 // node < 16 :
 const Util = require('util');
-const { timeStamp } = require('console');
 const pipeline = Util.promisify(Stream.pipeline);
 
 // export just to illustrate module usage
@@ -26,6 +25,7 @@ module.exports = async function runExample(manager, connName) {
     // stream all reads to a central JSON file (illustrative purposes only)
     rtn.jsonFile = `${Os.tmpdir()}/sqler-${connName}-read-stream-all.json`;
 
+    let count = 0;
     for (let ti = 0; ti < rtn.length; ti++) {
       // read from multiple tables
       rtn[ti] = await manager.db[connName].read[`table${ti + 1}`].rows({
@@ -43,12 +43,9 @@ module.exports = async function runExample(manager, connName) {
             objectMode: true,
             transform: async function transformer(chunk, encoding, callback) {
               try {
+                count++;
                 if (chunk.report instanceof Stream.Readable) {
-                  // stream the report into a file (illustrative purposes only)
-                  chunk.reportPath = `${Os.tmpdir()}/sqler-${connName}-read-${chunk.id}.png`;
-                  chunk.report.pipe(Fs.createWriteStream(chunk.reportPath));
-                  // don't include the report in the JSON since there should be a file
-                  delete chunk.report;
+                  await streamLobToFile(connName, chunk.report, chunk);
                 }
                 callback(null, chunk);
               } catch (err) {
@@ -69,6 +66,11 @@ module.exports = async function runExample(manager, connName) {
           Fs.createWriteStream(rtn.jsonFile, { flags: ti ? 'a' : 'w' })
         );
       }
+      
+      // when nothing is written make sure the JSON file is empty (illustrative purposes only)
+      if (!count) {
+        Fs.promises.writeFile(rtn.jsonFile, '[]');
+      }
     }
   
     // commit the transaction
@@ -83,3 +85,25 @@ module.exports = async function runExample(manager, connName) {
 
   return { rows: [ ...rtn[0].rows, ...rtn[1].rows ], jsonFile: rtn.jsonFile };
 };
+
+/**
+ * Streams a LOB `oracledb.Lob` instance into a file
+ * @param {String} connName The connection name that will be included in the written file name
+ * @param {Object} lob The outbound LOB parameter name that will be streamed
+ * @param {Object} chunk The LOB owning object
+ * @returns {Promise} The LOB to file promise
+ */
+function streamLobToFile(connName, lob, chunk) {
+  return new Promise((resolve, reject) => {
+    // don't include the report in the JSON since there should be a file
+    delete chunk.report;
+    // stream the report into a file (illustrative purposes only)
+    chunk.reportPath = `${Os.tmpdir()}/sqler-${connName}-read-${chunk.id}.png`;
+    const writeStream = Fs.createWriteStream(chunk.reportPath);
+    writeStream.on('error', (err) => lob.destroy(err));
+    lob.on('close', () => resolve());
+    lob.on('end', () => lob.destroy());
+    lob.on('error', (err) => reject(err));
+    lob.pipe(writeStream);
+  });
+}

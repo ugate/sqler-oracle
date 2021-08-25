@@ -31,7 +31,7 @@ module.exports = async function runExample(manager, connName) {
       if (row.report) {
         // store the path to the report (illustrative purposes only)
         row.reportPath = `${Os.tmpdir()}/sqler-${connName}-read-${row.id}.png`;
-        writeProms.push(streamToFileLOB(row, 'report', row.reportPath));
+        writeProms.push(streamLobToFile(row.report, row.reportPath));
       }
     }
     if (writeProms.length) {
@@ -52,34 +52,18 @@ module.exports = async function runExample(manager, connName) {
 };
 
 /**
- * Streams an `oracledb.Lob` instance to a file
- * @param {Object} row The `results.row` that contains the `name` 
- * @param {String} name The outbound LOB parameter name that will be streamed
+ * Streams a LOB `oracledb.Lob` instance into a file
+ * @param {Object} lob The outbound LOB parameter name that will be streamed
  * @param {String} pathToLOB The LOB file path to stream
- * @returns {typedefs.SQLERExecResults} The passed results
+ * @returns {Promise} The LOB to file promise
  */
-async function streamToFileLOB(row, name, pathToLOB) {
+ function streamLobToFile(lob, pathToLOB) {
   return new Promise((resolve, reject) => {
-    // raw Oracle "outBinds" should contain the bind parameter name
-    if (!row[name]) {
-      reject(new Error(`Missing "row.${name}" - unable to stream LOB data to: ${pathToLOB}`));
-      return;
-    }
-    // for CLOBs, Oracle returns a stream
-    const lob = row[name];
-    // for CLOBs, set the encoding so a string is returned rather than a buffer
-    lob.setEncoding('utf8');
-    lob.on('error', async (err) => reject(err));
-    lob.on('end', async () => resolve(row));
-    let stream;
-    try {
-      stream = Fs.createWriteStream(pathToLOB);
-    } catch (err) {
-      reject(err);
-      return;
-    }
-    stream.on('error', async (err) => reject(err));
-    // copy the LOB to file
-    lob.pipe(stream);
+    const writeStream = Fs.createWriteStream(pathToLOB);
+    writeStream.on('error', (err) => lob.destroy(err));
+    lob.on('close', () => resolve());
+    lob.on('end', () => lob.destroy());
+    lob.on('error', (err) => reject(err));
+    lob.pipe(writeStream);
   });
 }

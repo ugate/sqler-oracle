@@ -65,7 +65,7 @@ async function implicitTransactionUpdate(manager, connName, rtn, table1BindsArra
     rtn.txImpRslts[ni] = await manager.db[connName].update[`table${ni + 1}`].rows({
       // update binds will be batched in groups of 1 before streaming them to the database since
       // execOpts.stream = 1, but we could have batched them in groups (stream = 2) as well
-      // https://mariadb.com/kb/en/connector-nodejs-promise-api/#connectionbatchsql-values-promise
+      // https://oracle.github.io/node-oracledb/doc/api.html#executemany
       stream: 1
       // no need to set execOpts.binds since they will be streamed from the update instead
     });
@@ -106,7 +106,7 @@ async function explicitTransactionUpdate(manager, connName, rtn, table1BindsArra
         transactionId: tx.id, // ensure execution takes place within transaction
         // update binds will be batched in groups of 1 before streaming them to the database since
         // execOpts.stream = 1, but we could have batched them in groups (stream = 2) as well
-        // https://mariadb.com/kb/en/connector-nodejs-promise-api/#connectionbatchsql-values-promise
+        // https://oracle.github.io/node-oracledb/doc/api.html#executemany
         stream: 1
         // no need to set execOpts.binds since they will be streamed from the update instead
       });
@@ -114,16 +114,6 @@ async function explicitTransactionUpdate(manager, connName, rtn, table1BindsArra
       // now that the write streams are ready and the read binds have been renamed,
       // we can cycle through the bind arrays and write them to the appropriate tables
       for (let writeStream of rtn.txExpRslts[ni].rows) {
-        // writeStream.on('end', async () => {console.log('WRITE END!!!!!!!!!!!!!!!!!!!!!', tx)
-        //   if (tx.state.isReleased) return;
-        //   const isReleaseConn = (tx.state.committed + tx.state.rolledback) === (bindsArrays.length - 1);
-        //   //await tx.commit(isReleaseConn);
-        // })
-        // writeStream.on('error', async (err) => {console.log('WRITE ERROR!!!!!!!!!!!!!!!!!!!!!', tx)
-        //   if (tx.state.isReleased) return;
-        //   const isReleaseConn = (tx.state.committed + tx.state.rolledback) === (bindsArrays.length - 1);
-        //   //await tx.rollback(isReleaseConn);
-        // });
         await pipeline(
           // here we're just using some static values for illustration purposes, but they can come from a
           // any readable stream source like a file, database, etc. as long as they are "transformed"
@@ -159,21 +149,12 @@ async function preparedStatementUpdate(manager, connName, rtn, table1BindsArray,
     for (let bindsArray of bindsArrays) {
       // Example using an implicit transaction for each streamed (autoCommit = true is the default)
       rtn.psRslts[ni] = await manager.db[connName].update[`table${ni + 1}`].rows({
-        // flag the SQL execution as a prepared statement
-        // this will cause the statement to be prepared
-        // and a dedicated connection to be allocated from
-        // the pool just before the first SQL executes
+        // prepared statement flag does not really do anything, but to show universal sqler API use
+        // https://oracle.github.io/node-oracledb/doc/api.html#stmtcache
         prepareStatement: true,
-        driverOptions: {
-          // prepared statements in MySQL/MariaDB use a temporary
-          // stored procedure to execute prepared statements...
-          // in order to do so, the stored procedure needs to have
-          // a database scope defined where it will reside
-          preparedStatementDatabase: 'sqlermysql'
-        },
         // update binds will be batched in groups of 1 before streaming them to the database since
         // execOpts.stream = 1, but we could have batched them in groups (stream = 2) as well
-        // https://mariadb.com/kb/en/connector-nodejs-promise-api/#connectionbatchsql-values-promise
+        // https://oracle.github.io/node-oracledb/doc/api.html#executemany
         stream: 1
         // no need to set execOpts.binds since they will be streamed from the update instead
       });
@@ -229,17 +210,12 @@ async function preparedStatementExplicitTxUpdate(manager, connName, rtn, table1B
       rtn.txExpPsRslts[ni] = await manager.db[connName].update[`table${ni + 1}`].rows({
         autoCommit: false, // don't auto-commit after execution
         transactionId: tx.id, // ensure execution takes place within transaction
-        prepareStatement: true, // ensure a prepared statement is used
-        driverOptions: {
-          // prepared statements in MySQL/MariaDB use a temporary
-          // stored procedure to execute prepared statements...
-          // in order to do so, the stored procedure needs to have
-          // a database scope defined where it will reside
-          preparedStatementDatabase: 'sqlermysql'
-        },
+        // prepared statement flag does not really do anything, but to show universal sqler API use
+        // https://oracle.github.io/node-oracledb/doc/api.html#stmtcache
+        prepareStatement: true,
         // update binds will be batched in groups of 1 before streaming them to the database since
         // execOpts.stream = 1, but we could have batched them in groups (stream = 2) as well
-        // https://mariadb.com/kb/en/connector-nodejs-promise-api/#connectionbatchsql-values-promise
+        // https://oracle.github.io/node-oracledb/doc/api.html#executemany
         stream: 1
         // no need to set execOpts.binds since they will be streamed from the update instead
       });
@@ -247,16 +223,6 @@ async function preparedStatementExplicitTxUpdate(manager, connName, rtn, table1B
       // now that the write streams are ready and the read binds have been renamed,
       // we can cycle through the bind arrays and write them to the appropriate tables
       for (let writeStream of rtn.txExpPsRslts[ni].rows) {
-        // writeStream.on('end', async () => {console.log('WRITE END!!!!!!!!!!!!!!!!!!!!!', tx)
-        //   if (tx.state.isReleased) return;
-        //   const isReleaseConn = (tx.state.committed + tx.state.rolledback) === (bindsArrays.length - 1);
-        //   //await tx.commit(isReleaseConn);
-        // })
-        // writeStream.on('error', async (err) => {console.log('WRITE ERROR!!!!!!!!!!!!!!!!!!!!!', tx)
-        //   if (tx.state.isReleased) return;
-        //   const isReleaseConn = (tx.state.committed + tx.state.rolledback) === (bindsArrays.length - 1);
-        //   //await tx.rollback(isReleaseConn);
-        // });
         await pipeline(
           // here we're just using some static values for illustration purposes, but they can come from a
           // any readable stream source like a file, database, etc. as long as they are "transformed"

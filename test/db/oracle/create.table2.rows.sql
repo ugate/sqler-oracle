@@ -1,3 +1,3 @@
 INSERT INTO TEST2 (ID, NAME, REPORT, CREATED_AT, UPDATED_AT)
-VALUES (:id2, :name2, EMPTY_CLOB(), :created2, :updated2)
+VALUES (:id2, :name2, EMPTY_BLOB(), :created2, :updated2)
 RETURNING REPORT INTO :report2

@@ -26,22 +26,18 @@ module.exports = async function runExample(manager, connName) {
     [
       {
         id2: 100, name2: 'TABLE: 2, ROW: 1, CREATE_STREAM: "Initial creation"', created2: date, updated2: date,
-        // tell Oracle that a LOB is inbound - SQL using "RETURNING INTO"
-        // (for small files, contents can be directly set on report2)
-        report2: null
+        report2: null // see report2 in bindDefs
       },
       {
         id2: 200, name2: 'TABLE: 2, ROW: 2, CREATE_STREAM: "Initial creation"', created2: date, updated2: date,
-        // tell Oracle that a LOB is inbound - SQL using "RETURNING INTO"
-        // (for small files, contents can be directly set on report2)
-        report2: null
+        report2: null // see report2 in bindDefs
       },
     ]
   ];
   // since table2 is using oracledb.BIND_OUT for streaming column data,
   // there needs to be a bind definitions set on "driverOptions.exec"
-  // https://oracle.github.io/node-oracledb/doc/api.html#-42733-binddefs
-  // https://oracle.github.io/node-oracledb/doc/api.html#-313-node-oracledb-type-constants
+  // https://oracle.github.io/node-oracledb/doc/api.html#executemanyoptbinddefs
+  // https://oracle.github.io/node-oracledb/doc/api.html#oracledbconstantsbinddir
   const driverOptsArray = [
     {
       exec: {
@@ -56,7 +52,9 @@ module.exports = async function runExample(manager, connName) {
           name2: { type: '${STRING}', maxSize: 512 },
           created2: { type: '${DATE}' },
           updated2: { type: '${DATE}' },
-          report2: { type: '${CLOB}', dir: '${BIND_OUT}' }
+          // tell Oracle that a LOB is inbound - SQL using "RETURNING INTO"
+          // (for small files, contents can be directly set on report2 as STRING)
+          report2: { type: '${BLOB}', dir: '${BIND_OUT}' }
         }
       }
     }
@@ -80,7 +78,7 @@ module.exports = async function runExample(manager, connName) {
       rslts[ti] = await manager.db[connName].create[`table${ti + 1}`].rows({
         // create binds will be batched in groups of 2 before streaming them to the database since
         // execOpts.stream = 2, but we could have batched them individually (stream = 1) as well
-        // https://oracle.github.io/node-oracledb/doc/api.html#-427-connectionexecutemany
+        // https://oracle.github.io/node-oracledb/doc/api.html#executemany
         stream: 2,
         autoCommit: false, // transaction needs to span the INSERT and pipe()
         transactionId: tx.id, // ensure execution takes place within transaction
@@ -94,7 +92,7 @@ module.exports = async function runExample(manager, connName) {
         if (ti) {
           writeStream.on(typedefs.EVENT_STREAM_BATCH, async (batch) => {
             for (let rslt of batch) {
-              proms.push(streamColumnLobFromFile(rslt, 'report2', reportsArray));
+              proms.push(streamLobFromFile(rslt, 'report2', reportsArray));
             }
           });
         }
@@ -133,40 +131,25 @@ module.exports = async function runExample(manager, connName) {
  * `rslt.raw.outBinds`
  * @param {String} name The inbound LOB parameter name that will be streamed
  * @param {(String | String[])} pathsToLOB The LOB file path(s) to stream
- * @param {String} [encoding=utf8] The encoding to use when streaming/reading the file 
  * @returns {typedefs.SQLERExecResults} The passed results
  */
-async function streamColumnLobFromFile(rslt, name, pathsToLOB, encoding = 'binary') {
-  return new Promise((resolve, reject) => {
-    const outs = Array.isArray(rslt.outBinds) ? rslt.outBinds : [ rslt.outBinds ];
-    const pths = Array.isArray(pathsToLOB) ? pathsToLOB : [ pathsToLOB ];
-    let oi = 0, finishCount = 0;
-    for (let out of outs) {
-      // raw Oracle "outBinds" should contain the bind parameter name
-      if (!out || !out[name] || !out[name][0]) {
-        reject(new Error(`Missing RETURNING INTO statement for LOB streaming SQL for "${name}"?`));
-        return;
-      }
-      // for "type: '${CLOB}', dir: '${BIND_OUT}'", Oracle returns a stream
-      const lob = out[name][0];
-      lob.on('error', async (err) => reject(err));
-      lob.on('finish', async () => {
-        finishCount++;
-        if (finishCount >= outs.length) {
-          resolve(rslt);
-        }
-      });
-      let stream;
-      try {
-        stream = Fs.createReadStream(pths[oi], encoding);
-      } catch (err) {
-        reject(err);
-        return;
-      }
-      stream.on('error', async (err) => reject(err));
-      // copy the file contents to the LOB
-      stream.pipe(lob);
-      oi++;
+async function streamLobFromFile(rslt, name, pathsToLOB) {
+  const outs = Array.isArray(rslt.outBinds) ? rslt.outBinds : [ rslt.outBinds ];
+  const pths = Array.isArray(pathsToLOB) ? pathsToLOB : [ pathsToLOB ];
+  let oi = 0, proms = new Array(outs.length);
+  for (let out of outs) {
+    // raw Oracle "outBinds" should contain the bind parameter name
+    if (!out || !out[name] || !out[name][0]) {
+      throw new Error(`Missing RETURNING INTO statement for LOB streaming SQL for "${name}"?`);
     }
-  });
+    // for "type: '${BLOB}', dir: '${BIND_OUT}'", Oracle returns a stream
+    const lob = out[name][0];
+    proms[oi] = pipeline(
+      Fs.createReadStream(pths[oi]),
+      lob
+    );
+    oi++;
+  }
+  await Promise.all(proms);
+  return rslt;
 }

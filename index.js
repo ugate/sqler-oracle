@@ -197,14 +197,16 @@ class OracleDialect {
       /** @type {typedefs.SQLERExecResults} */
       const rtn = {};
 
+      // pseudo prepared statement for sqler API compliance
+      if (opts.prepareStatement) {
+        prepared(dlt, sql, opts, meta, txo, rtn);
+      }
+
       if (opts.stream >= 0) { // streams handle prepared statements when streaming starts
         rslts = [ opts.type === 'READ' ? await createReadStream(dlt, sql, opts, meta, txo, rtn) : createWriteStream(dlt, sql, opts, meta, txo, rtn) ];
         rtn.rows = rslts;
         rtn.raw = rslts;
       } else {
-        if (opts.prepareStatement) {
-          prepared(dlt, sql, opts, meta, txo, rtn);
-        }
         execMeta = createExecMeta(dlt, sql, opts);
         const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
         conn = txo ? null : await dlt.this.getConnection(pool, opts);
@@ -565,14 +567,14 @@ function prepared(dlt, sql, opts, meta, txo, rtn) {
     if (dlt.at.logger) {
       dlt.at.logger(`sqler-oracle: "unprepare" is a noop since Oracle implements the concept of statement caching instead (${
         meta.path
-      }). See https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching`);
+      }). See https://oracle.github.io/node-oracledb/doc/api.html#stmtcache`);
     }
   };
   return rtn;
 }
 
 /**
- * There is no prepare/unprepare since Oracle uses {@link https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching statement caching}.
+ * There is no prepare/unprepare since Oracle uses {@link https://oracle.github.io/node-oracledb/doc/api.html#stmtcache statement caching}.
  * Statement cache should account for the number of prepared functions/SQL files by a factor of `3x` to accomodate that many fragments in each SQL file.
  * @private
  * @param {InternalOracleDB} dlt The internal Oracle object instance

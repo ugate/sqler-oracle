@@ -54,14 +54,14 @@ module.exports = async function runExample(manager, connName) {
         name2: 'TABLE: 2, ROW: 1, CREATE: "Initial creation"',
         // tell Oracle that a LOB is inbound - SQL using "RETURNING INTO"
         // (for small files, contents can be directly set on report2)
-        report2: { type: '${CLOB}', dir: '${BIND_OUT}' },
+        report2: { type: '${BLOB}', dir: '${BIND_OUT}' },
         created2: date,
         updated2: date
       }
     });
 
     // wait until inbound streaming of report2 LOB has been completed
-    await streamFromFileLOB(rtn[1], 'report2', './test/files/audit-report.png');
+    await streamLobFromFile(rtn[1], 'report2', './test/files/audit-report.png');
 
     // commit the transaction
     await tx.commit(true); // true to release the connection back to the pool
@@ -82,33 +82,18 @@ module.exports = async function runExample(manager, connName) {
  * `rslt.raw.outBinds`
  * @param {String} name The inbound LOB parameter name that will be streamed
  * @param {String} pathToLOB The LOB file path to stream
- * @param {String} [encoding=utf8] The optional encoding to read the file as
  * @returns {typedefs.SQLERExecResults} The passed results
  */
-async function streamFromFileLOB(rslt, name, pathToLOB, encoding = 'utf8') {
-  return new Promise((resolve, reject) => {
-    // raw Oracle "outBinds" should contain the bind parameter name
-    if (!rslt.raw.outBinds || !rslt.raw.outBinds[name] || !rslt.raw.outBinds[name][0]) {
-      reject(new Error(`Missing RETURNING INTO statement for LOB streaming SQL?`));
-      return;
-    }
-    // for "type: '${CLOB}', dir: '${BIND_OUT}'", Oracle returns a stream
-    const lob = rslt.raw.outBinds[name][0];
-    await pipeline(
-      Fs.createReadStream(pathToLOB, encoding),
-      lob
-    );
-    // lob.on('error', async (err) => reject(err));
-    // lob.on('finish', async () => resolve(rslt));
-    // let stream;
-    // try {
-    //   stream = Fs.createReadStream(pathToLOB, 'utf8');
-    // } catch (err) {
-    //   reject(err);
-    //   return;
-    // }
-    // stream.on('error', async (err) => reject(err));
-    // // copy the file contents to the LOB
-    // stream.pipe(lob);
-  });
+async function streamLobFromFile(rslt, name, pathToLOB) {
+  // raw Oracle "outBinds" should contain the bind parameter name
+  if (!rslt.raw.outBinds || !rslt.raw.outBinds[name] || !rslt.raw.outBinds[name][0]) {
+    throw new Error(`Missing RETURNING INTO statement for LOB streaming SQL for "${name}"?`);
+  }
+  // for "type: '${BLOB}', dir: '${BIND_OUT}'", Oracle returns a stream
+  const lob = rslt.raw.outBinds[name][0];
+  await pipeline(
+    Fs.createReadStream(pathToLOB),
+    lob
+  );
+  return rslt
 }
