@@ -8,6 +8,7 @@ const Stream = require('stream');
 // const { pipeline } = require('stream/promises');
 // node < 16 :
 const Util = require('util');
+const { timeStamp } = require('console');
 const pipeline = Util.promisify(Stream.pipeline);
 
 // export just to illustrate module usage
@@ -33,23 +34,26 @@ module.exports = async function runExample(manager, connName) {
       });
 
       // write binary report buffer to file?
-      const fileWriteProms = [];
       for (let readStream of rtn[ti].rows) {
-        // read stream is MDB implementation:
-        // https://mariadb.com/kb/en/connector-nodejs-promise-api/#connectionquerystreamsql-values-emitter
+        // read stream is Oracle implementation:
+        // https://oracle.github.io/node-oracledb/doc/api.html#querystream
         await pipeline(
           readStream,
           new Stream.Transform({
             objectMode: true,
-            transform: function transformer(chunk, encoding, callback) {
-              if (Buffer.isBuffer(chunk.report)) {
-                // transform and store the path to the report (illustrative purposes only)
-                chunk.reportPath = `${Os.tmpdir()}/sqler-${connName}-read-${chunk.id}.png`;
-                fileWriteProms.push(Fs.promises.writeFile(chunk.reportPath, chunk.report));
-                // don't include the report Buffer in the JSON since there should be a file
-                delete chunk.report;
+            transform: async function transformer(chunk, encoding, callback) {
+              try {
+                if (chunk.report instanceof Stream.Readable) {
+                  // stream the report into a file (illustrative purposes only)
+                  chunk.reportPath = `${Os.tmpdir()}/sqler-${connName}-read-${chunk.id}.png`;
+                  chunk.report.pipe(Fs.createWriteStream(chunk.reportPath));
+                  // don't include the report in the JSON since there should be a file
+                  delete chunk.report;
+                }
+                callback(null, chunk);
+              } catch (err) {
+                callback(err, chunk);
               }
-              callback(null, chunk);
             }
           }),
           // add a transform that formats the JSON into an array string suitable for file write
@@ -64,9 +68,6 @@ module.exports = async function runExample(manager, connName) {
           },
           Fs.createWriteStream(rtn.jsonFile, { flags: ti ? 'a' : 'w' })
         );
-      }
-      if (fileWriteProms.length) {
-        await Promise.all(fileWriteProms);
       }
     }
   

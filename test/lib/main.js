@@ -599,7 +599,7 @@ function crudly(state, expectOpts, rslt) {
   if (expectOpts.streamClass) {
     // should be set by the executing script
     expect(rslt.jsonFile, `CRUD ${expectOpts.label} jsonFile`).not.empty();
-    rows = JSON.parse(Fs.readFileSync(rslt.jsonFile, { encoding: 'utf-8' }));
+    rows = JSON.parse(Fs.readFileSync(rslt.jsonFile, { encoding: 'utf-8' }));console.log('~~~~~~~~~~~~~~~~~~~~~~~', rows)
     expect(rows, `CRUD ${expectOpts.label} jsonFile rows`).array();
     expect(rows, `CRUD ${expectOpts.label} jsonFile rows.length`).length(expectOpts.count);
     for (let row of rslt.rows) {

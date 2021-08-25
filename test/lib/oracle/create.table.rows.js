@@ -2,6 +2,12 @@
 
 const typedefs = require('sqler/typedefs');
 const Fs = require('fs');
+const Stream = require('stream');
+// node >= v16 :
+// const { pipeline } = require('stream/promises');
+// node < 16 :
+const Util = require('util');
+const pipeline = Util.promisify(Stream.pipeline);
 
 // export just to illustrate module usage
 module.exports = async function runExample(manager, connName) {
@@ -76,9 +82,10 @@ module.exports = async function runExample(manager, connName) {
  * `rslt.raw.outBinds`
  * @param {String} name The inbound LOB parameter name that will be streamed
  * @param {String} pathToLOB The LOB file path to stream
+ * @param {String} [encoding=utf8] The optional encoding to read the file as
  * @returns {typedefs.SQLERExecResults} The passed results
  */
-async function streamFromFileLOB(rslt, name, pathToLOB) {
+async function streamFromFileLOB(rslt, name, pathToLOB, encoding = 'utf8') {
   return new Promise((resolve, reject) => {
     // raw Oracle "outBinds" should contain the bind parameter name
     if (!rslt.raw.outBinds || !rslt.raw.outBinds[name] || !rslt.raw.outBinds[name][0]) {
@@ -87,17 +94,21 @@ async function streamFromFileLOB(rslt, name, pathToLOB) {
     }
     // for "type: '${CLOB}', dir: '${BIND_OUT}'", Oracle returns a stream
     const lob = rslt.raw.outBinds[name][0];
-    lob.on('error', async (err) => reject(err));
-    lob.on('finish', async () => resolve(rslt));
-    let stream;
-    try {
-      stream = Fs.createReadStream(pathToLOB, 'utf8');
-    } catch (err) {
-      reject(err);
-      return;
-    }
-    stream.on('error', async (err) => reject(err));
-    // copy the file contents to the LOB
-    stream.pipe(lob);
+    await pipeline(
+      Fs.createReadStream(pathToLOB, encoding),
+      lob
+    );
+    // lob.on('error', async (err) => reject(err));
+    // lob.on('finish', async () => resolve(rslt));
+    // let stream;
+    // try {
+    //   stream = Fs.createReadStream(pathToLOB, 'utf8');
+    // } catch (err) {
+    //   reject(err);
+    //   return;
+    // }
+    // stream.on('error', async (err) => reject(err));
+    // // copy the file contents to the LOB
+    // stream.pipe(lob);
   });
 }

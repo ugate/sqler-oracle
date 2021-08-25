@@ -327,7 +327,7 @@ function createExecMeta(dlt, sql, opts, bindsAlt) {
   rtn.dopts = opts.driverOptions || {};
   rtn.dopts.exec = !!rtn.dopts && rtn.dopts.exec ? dlt.at.track.interpolate({}, rtn.dopts.exec, dlt.at.driver) : {};
   rtn.dopts.exec.autoCommit = opts.autoCommit;
-  if (!rtn.dopts.exec.hasOwnProperty('outFormat')) rtn.dopts.exec.outFormat = dlt.at.driver.OUT_FORMAT_OBJECT;console.log('~~~~~~~~~~~~~~', rtn.dopts.exec.outFormat === dlt.at.driver.OUT_FORMAT_OBJECT)
+  if (!rtn.dopts.exec.hasOwnProperty('outFormat')) rtn.dopts.exec.outFormat = dlt.at.driver.OUT_FORMAT_OBJECT;
 
   rtn.sql = sql;
   rtn.binds = rtn.bndp;
@@ -431,7 +431,7 @@ async function createReadStream(dlt, sql, opts, meta, txo, rtn) {
   const execMeta = createExecMeta(dlt, sql, opts);
   const pool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
   const conn = txo ? null : connProm ? await connProm : await (connProm = dlt.this.getConnection(pool, opts));
-  const readable = (txo ? txo.conn : conn).queryStream(execMeta.sql, execMeta.binds);
+  const readable = (txo ? txo.conn : conn).queryStream(execMeta.sql, execMeta.binds, execMeta.dopts.exec);
   // dlt.at.track.readable(opts, readable);
   readable.on('error', async (err) => {
     if (err.sqlerOracle) return;
@@ -568,7 +568,7 @@ function prepared(dlt, sql, opts, meta, txo, rtn) {
       }). See https://oracle.github.io/node-oracledb/doc/api.html#-313-statement-caching`);
     }
   };
-  return {};
+  return rtn;
 }
 
 /**
