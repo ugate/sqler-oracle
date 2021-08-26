@@ -72,8 +72,6 @@ class OracleDialect {
         dlt.at.pool.oracleConf.connectString = `(DESCRIPTION = (ADDRESS = (PROTOCOL = ${url.protocol})(HOST = ${url.host})(PORT = ${url.port}))` +
         `(CONNECT_DATA = (SERVER = POOLED)(SERVICE_NAME = ${connConf.service})))`;
         dlt.at.connectionType = 'TNS_SERVICE';
-        if (track.tnsCnt) track.tnsCnt++;
-        else track.tnsCnt = 1;
       } else {
         dlt.at.pool.oracleConf.connectString = `${url.host}:${url.port}/${connConf.service}`;
         dlt.at.connectionType = 'SERVICE';
@@ -95,8 +93,12 @@ class OracleDialect {
   async init(opts) {
     const dlt = internal(this), numSql = opts.numOfPreparedFuncs;
     statementCacheSize(dlt, numSql);
+    /** @type {InternalFlightRecorder} */
+    let recorder;
     /** @type {DBDriver.Pool} */
     let oraPool;
+    /** @type {DBDriver.Connection} */
+    let conn;
     try {
       try {
         oraPool = dlt.at.driver.getPool(dlt.at.pool.oracleConf.poolAlias);
@@ -111,22 +113,17 @@ class OracleDialect {
       }
       if (dlt.at.pingOnInit) {
         // validate by pinging connection from pool
-        /** @type {DBDriver.Connection} */
-        const conn = await oraPool.getConnection();
-        /** @type {InternalFlightRecorder} */
-        let pingRecorder;
-        try {
-          await conn.ping();
-        } catch (err) {
-          pingRecorder = errored(`sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`, dlt, null, err);
-        } finally {
-          await finalize(pingRecorder, dlt, operation(dlt, 'close', false, conn, opts));
-        }
+        conn = await oraPool.getConnection();
+        await conn.ping();
       }
       return oraPool;
     } catch (err) {
-      errored(`sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`, dlt, null, err);
+      recorder = errored(`sqler-oracle: ${oraPool ? 'Unable to ping connection from' : 'Unable to create'} connection pool`, dlt, null, err);
       throw err;
+    } finally {
+      if (conn) {
+        await finalize(recorder, dlt, operation(dlt, 'close', false, conn, opts));
+      }
     }
   }
 

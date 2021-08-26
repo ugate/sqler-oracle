@@ -175,7 +175,7 @@ class Tester {
 
   static async bindsInvalidThrow() {
     const date = new Date();
-    return test.mgr.db[test.vendor].create.table1.rows({
+    await test.mgr.db[test.vendor].create.table1.rows({
       binds: {
         id: 500, name: 'SHOULD NEVER GET INSERTED (from bindsInvalidThrow)', /* "created" missing should throw error */ updated: date
       }
@@ -183,16 +183,24 @@ class Tester {
   }
 
   static async transactionRollback() {
-    const tx = await test.mgr.db[test.vendor].beginTransaction();
-    const date = new Date();
-    const rslt = await test.mgr.db[test.vendor].create.table1.rows({
-      autoCommit: false,
-      transactionId: tx.id,
-      binds: {
-        id: 500, name: 'SHOULD NEVER GET INSERTED (from transactionRollback)', created: date, updated: date
-      }
-    });
-    return tx.rollback();
+    const conf = getConf({} /*pass obj so conf is copy*/);
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    let tx;
+    try {
+      await mgr.init();
+      const date = new Date();
+      tx = await mgr.db[test.vendor].beginTransaction();
+      const rslt = await mgr.db[test.vendor].create.table1.rows({
+        autoCommit: false,
+        transactionId: tx.id,
+        binds: {
+          id: 1000, name: 'SHOULD NEVER GET INSERTED (from transactionRollback)', created: date, updated: date
+        }
+      });
+      await tx.rollback(true);
+    } finally {
+      await mgr.close();
+    }
   }
 
   //====================== Configurations ======================
@@ -238,6 +246,7 @@ class Tester {
         } else {
           conn[prop].timeout = 10000;
         }
+        conn[prop].alias = 'poolSwap';
       }
     });
     const mgr = new Manager(conf, test.cache, test.mgrLogit);
@@ -297,6 +306,7 @@ class Tester {
     } else {
       conf.univ.db[test.vendor].port = test.defaultPort;
     }
+    conf.univ.db[test.vendor].protocol = 'TCP';
     const mgr = new Manager(conf, test.cache, test.mgrLogit);
     await mgr.init();
     return mgr.close();
@@ -306,6 +316,7 @@ class Tester {
     const conf = getConf({} /*pass obj so conf is copy*/);
     const conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
     conn2.name += '2';
+    conn2.protocol = 'TCP';
     conf.db.connections.push(conn2);
     const mgr = new Manager(conf, test.cache, test.mgrLogit);
     await mgr.init();
@@ -362,7 +373,7 @@ class Tester {
     const conf = getConf({} /*pass obj so conf is copy*/), conn2 = JSON.parse(JSON.stringify(conf.db.connections[0]));
     conn2.name += '2';
     conf.db.connections.push(conn2);
-    return expectTNS(conf);
+    return expectTNS(conf, { useTNS: true });
   }
 
   static async driverOptionsPool() {
@@ -445,6 +456,29 @@ class Tester {
     const mgr = new Manager(conf, test.cache, test.mgrLogit);
     await mgr.init();
     await mgr.close();
+  }
+
+  static async confInvalidServiceThrow() {
+    const conf = getConf({} /*pass obj so conf is copy*/), conn = conf.db.connections[0];
+    conn.service = 'InvalidServiceName';
+    const mgr = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr.init();
+    await mgr.close();
+  }
+
+  static async confMultipleManagersSharedPool() {
+    const conf = getConf({
+      pool: (prop, conn) => {
+        conn[prop] = conn[prop] || {};
+        conn[prop].alias = 'multipleManagersSharedPool';
+      }
+    });
+    const mgr1 = new Manager(conf, test.cache, test.mgrLogit);
+    const mgr2 = new Manager(conf, test.cache, test.mgrLogit);
+    await mgr1.init();
+    await mgr2.init();
+    await mgr1.close();
+    await mgr2.close();
   }
 }
 
@@ -633,8 +667,7 @@ if (!Labrat.usingTestRunner()) {
  * Expects the use of Oracle SIDs to work properly
  * @param {SQLERConfigurationOptions} conf One or more configurations to generate
  * @param {Object} [testOpts] The SID test options
- * @param {String} [testOpts.sid] An alernative SID to use for `conf.db.connections[].driverOptions.sid`
- * Defaults to the `service` set on the connection.
+ * @param {Boolean} [testOpts.useTNS] Truthy to use a TNS connection string
  * @param {Boolean} [testOpts.pingOnInit] An alternative flag for `conf.db.connections[].driverOptions.pingOnInit`
  */
 async function expectTNS(conf, testOpts) {

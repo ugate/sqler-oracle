@@ -44,10 +44,11 @@ lab.experiment(plan, () => {
   lab.test(`${plan}: State`, { timeout: TEST_TKO }, Tester.state);
 
   lab.test(`${plan}: CRUD`, { timeout: TEST_TKO }, Tester.crud);
+  lab.test(`${plan}: CRUD Streaming`, { timeout: TEST_TKO }, Tester.crudStream);
   //lab.test(`${plan}: Execution Driver Options and Prepared Statement (Alternatives)`, { timeout: TEST_TKO }, Tester.execDriverOptionsAlt);
   lab.test(`${plan}: Invalid SQL`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'invalid SQL throw' }, Tester.sqlInvalidThrow));
-  lab.test(`${plan}: Invalid bind parameter`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'invalid bind param throw' }, Tester.bindsInvalidThrow));
-  lab.test(`${plan}: Rollback transaction`, { timeout: TEST_TKO }, Tester.transactionRollback);
+  lab.test(`${plan}: Invalid Bind Parameter`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'invalid bind param throw' }, Tester.bindsInvalidThrow));
+  lab.test(`${plan}: Transaction Rollback`, { timeout: TEST_TKO }, Tester.transactionRollback);
 
   // vendor specific tests
 
@@ -63,4 +64,6 @@ lab.experiment(plan, () => {
   lab.test(`${plan}: Connection/Private Port/Protocol None`, { timeout: TEST_TKO }, Tester.confPortProtocolNone);
   lab.test(`${plan}: Connection/Private Host Missing`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'no host throw' }, Tester.confHostNoneThrow));
   lab.test(`${plan}: Connection Service Missing`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'no service throw' }, Tester.confNoServiceThrow));
+  lab.test(`${plan}: Connection Service Invalid`, Labrat.expectFailure('onUnhandledRejection', { expect, label: 'invalid service throw' }, Tester.confInvalidServiceThrow));
+  lab.test(`${plan}: Connection Pool Shared Multiple Managers`, { timeout: TEST_TKO }, Tester.confMultipleManagersSharedPool);
 });
