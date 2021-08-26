@@ -4,7 +4,7 @@
 
 The examples below use the following setup:
 
-__[Private Options Configuration:](https://ugate.github.io/sqler/Manager.html#SQLERPrivateOptions)__ (appended to the subsequent connection options)
+__[Private Options Configuration:](https://ugate.github.io/sqler/typedefs.html#.SQLERPrivateOptions)__ (appended to the subsequent connection options)
 ```jsdocp ./test/fixtures/priv.json
 ```
 
